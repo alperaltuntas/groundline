@@ -70,6 +70,11 @@ def <name> (<params> : ℝ) : ℝ × … :=
   ...
 ```
 
+Binders are grouped by type in declaration order — real inputs as `ℝ`,
+logical inputs as `Bool` — so a kernel with a logical flag between two reals
+prints `(… dt : ℝ) (vol_cfl : Bool) (por_face_area : ℝ)`. Outputs must be
+real (the return type is `ℝ × …`), and so must locals.
+
 The "Outputs" line **derives from the actual intents** of the kernel's output
 parameters (deduplicated, declaration order) — it used to hardcode
 `intent(inout)` until a kernel with `intent(out)` outputs exposed the lie.

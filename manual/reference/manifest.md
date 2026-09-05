@@ -120,7 +120,7 @@ doc comments — resolved absolute paths never leak into generated files.
 - [`examples/quickstart/kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/quickstart/kernels.toml)
   — the self-contained toy pair, walked through in [the quickstart](../quickstart.md).
 - [`examples/turbo-stack.kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/turbo-stack.kernels.toml)
-  — the production instance (the MOM6 ⇄ TIM case study): the six kernel
+  — the production instance (the MOM6 ⇄ TIM case study): the seven kernel
   pairs, the NCAR dump directory and kernel header paths, pinned AMReX/MPI
   include dirs, and the shared `[lean]` project. On another site, copy it
   and repoint the paths — that file is the *only* thing that changes.

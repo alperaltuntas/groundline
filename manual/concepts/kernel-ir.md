@@ -41,9 +41,11 @@ Expressions (frozen dataclasses, language-neutral):
 Statements: `Assign`, `If` (structured, with elseif branches and an else
 body), `DoConcurrent` (multi-index nest), `Do` (one level of a plain loop,
 no stride). A kernel is `Kernel(name, params, locals, body)` with each
-`Param` carrying its declared type, intent, and rank — the intent being `in`,
-`inout`, `out`, or `result` (a function's result variable / return value: the
-single output, for which the caller supplies no value).
+`Param` carrying its declared type (`real`, `integer`, `logical`, or a
+derived type — only real and logical reach the printed def, as `ℝ` and `Bool`
+binders), intent, and rank — the intent being `in`, `inout`, `out`, or
+`result` (a function's result variable / return value: the single output, for
+which the caller supplies no value).
 
 Note what is *absent*: no while loops, no function calls other than a few
 intrinsics, no I/O, no pointers, no array sections, no modules or globals.

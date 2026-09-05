@@ -83,9 +83,17 @@ stable.
   and extraction refuses iff the nest references one.
   [How-to](../howto/inline-loops.md).
 
+**Types.** `real` and `integer` declarations are read as before; a
+`logical` declaration is read too, and a logical `intent(in)` dummy becomes a
+`Bool` input — its only admitted use is as a bare IF guard (`if (vol_CFL)`),
+which the expression grammar already covers as a plain designator. Logical
+locals and outputs refuse at print. In whole-procedure mode a derived-type
+dummy the body never references (the `G`, `GV`, `US` structs passed along by
+convention) is dropped, as pointize drops unused parameters in loop mode.
+
 **Notable refusal boundaries** (complete list in [the catalog](refusals.md)):
-non-intrinsic calls, strides in loop control, elseif-join shapes, literal
-kinds beyond real/int, chained `a%b%c` component paths.
+non-intrinsic calls, strides in loop control, literal kinds beyond real/int,
+chained `a%b%c` component paths, a local read before assignment.
 
 ## `frontend/clang_kernel.py` — C++, from clang JSON ASTs
 
@@ -115,9 +123,10 @@ Anything else refuses — pinned by a fixture where `b + 1` produces an
 `IntegralToFloating` cast and must raise.
 
 **Intent mapping.** A non-const lvalue reference (`Real &` / `double &`) →
-`inout`; a const by-value scalar (`const Real` / `const double`) → `in`.
-Everything else — pointers, const refs, plain mutable by-value scalars,
-non-real types, default arguments — refuses. Outputs are the reference
+`inout`; a const by-value scalar (`const Real` / `const double`) → `in`; a
+`const bool` → a logical `in` (a `Bool` binder, used as a bare `if` guard).
+Everything else — pointers, const refs, plain mutable by-value scalars, other
+types, default arguments — refuses. Outputs are the reference
 parameters in declaration order. The mapping keys on the *qualType
 spellings*: `Real` (amrex's alias, as the production headers spell it) and
 plain `double` (as the quickstart's standalone `.cpp` spells it) are the two
@@ -133,6 +142,12 @@ that is itself in tail position — so every path ends in exactly one return.
 An early return refuses at extraction; a path that falls off the end refuses
 in functionalize (the result is unassigned there); a non-void function that
 also has `Real &` parameters refuses.
+
+**Locals.** `Real const x = e;` is a `let`. A bare declaration `Real x;`
+(or several, `Real a, b;`) only records the local: its later assignments
+arrive as ordinary statements and are threaded by functionalize like any
+other write, and a read before the first assignment refuses there. A
+list/direct initializer refuses.
 
 **No pointize.** The C++ kernels this frontend targets are already per-point
 scalar functions, so extraction emits a rank-0 `Kernel` directly;

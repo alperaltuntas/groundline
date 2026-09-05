@@ -44,32 +44,41 @@ if (FunFac > RLdiff2) h_L = 3.0*h_i - 2.0*h_R
 if (FunFac < -RLdiff2) h_R = 3.0*h_i - 2.0*h_L   ! reads h_L, possibly just updated
 ```
 
-Functionalize supports the join in **exactly one shape**, deliberately
-restricted:
+Functionalize merges a join **sequentially**, exactly as the source executes
+it:
 
-- the `if` has a single branch (no elseif chain — the merge formula below is
-  binary);
-- every branch body consists solely of assignments to *output* variables — no
-  locals (a `let` may not escape a branch), no nested `if`s.
+- every branch body — then, each elseif, else (an absent else is an empty
+  branch) — is run against a *copy* of the incoming state. Assignments
+  update the copy; a local assigned inside the branch is tracked in the copy
+  too, so later reads within the branch see it; a nested `if` inside the
+  branch is merged recursively against the copy;
+- each variable some branch assigned becomes one conditional chain over the
+  branch conditions, `if c₁ then s₁[v] else if c₂ then s₂[v] else s_else[v]`
+  — an inline conditional expression (`Cond`, the one kernel-IR node no
+  frontend ever produces);
+- merged **outputs** update the state; merged **locals** are bound by `let`
+  right after the join, in first-assignment order. The statements that follow
+  then run against the merged values.
 
-The merge is per variable: each variable `v` some branch assigned gets
+Locals need one more rule, because a branch may define a local the others do
+not. If the local already had a `let` binding before the `if`, the other
+paths keep that binding (`let w := if u > 0 then u else w`, Lean's shadowing
+saying exactly what the source does). If it had none, the local is undefined
+on those paths: when nothing after the join reads it, it is simply dropped
+(flux_elem's `CFL`, `curv_3`, `dh` are of this kind — inlined where the
+branch read them, dead afterwards); when something does read it, functionalize
+**refuses** — a conservative read scan, so it may refuse spuriously, never
+mismodel. A local read before any assignment at all refuses outright.
 
-```text
-state'[v] = Cond(cond, state_then[v], state_else[v])
-```
-
-— an inline conditional expression (`if cond then … else …` in the printed
-Lean) — and variables no branch assigned pass through unchanged. The remaining
-statements then run against the *merged* state, so a later read of a variable
-the `if` may have updated observes the conditional value: sequential
-semantics, exactly as in the source. `Cond` is the one kernel-IR node no
-frontend ever produces — only this merge creates it.
-
-Any other join shape refuses. The restriction is not a temporary limitation
-waiting to be quietly relaxed — it is the one shape the merge semantics was
-designed for, tested on (the golden fixture pins the merged-state threading
-visibly), and audited against. A trailing `if` — nothing after it — keeps the
-structured if-expression path, so kernels without joins are unaffected.
+Until 2026-09-05 the join was supported in exactly one shape — a
+single-branch `if` assigning only to outputs, the CW84 kernel's pair of
+guarded assignments — and everything else refused. The generalization was a
+semantics decision taken explicitly when `flux_elem` demanded it (its
+if/elseif/else assigns four locals and one output, and the derivative
+computed after the join reads one of the locals); the old shape is a special
+case of the new rule and the CW84 def came out byte-identical. A trailing
+`if` — nothing after it — keeps the structured if-expression path, so kernels
+without joins are unaffected.
 
 ## Why this design is easy to trust
 

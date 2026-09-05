@@ -30,10 +30,10 @@ not bit-for-bit floating point). Both sides of every theorem are generated
 from compiler syntax trees (flang with-sema dumps, clang JSON ASTs) by a
 small deterministic translator that refuses anything outside its audited
 subset. The pipeline is driven by a declarative manifest and the `groundline
-kernel list/show/generate/verify` CLI; today it covers six kernel pairs — the
-entire pre-mass-flux TIM point-kernel population (5 of 5) plus the first
-primitive of the continuity mass-flux port — each with a checked equivalence
-theorem and a clean axioms audit. **The [manual](https://alperaltuntas.github.io/groundline/)
+kernel list/show/generate/verify` CLI; today it covers seven kernel pairs —
+the entire pre-mass-flux TIM point-kernel population (5 of 5) plus the first
+two primitives of the continuity mass-flux port — each with a checked
+equivalence theorem and a clean axioms audit. **The [manual](https://alperaltuntas.github.io/groundline/)
 is the guided tour** — concepts, a self-contained quickstart
 (`examples/quickstart/`), and case studies retold from the development log.
 

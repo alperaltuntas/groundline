@@ -150,9 +150,9 @@ equivalence holds. See [Wire verification into CI](howto/ci.md).
 
 The production manifest,
 [`examples/turbo-stack.kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/turbo-stack.kernels.toml),
-declares the six MOM6 ⇄ TIM kernel pairs — the five of the case studies plus
-`ratio_max`, the first primitive of the continuity mass-flux port. Two
-differences from the toy:
+declares the seven MOM6 ⇄ TIM kernel pairs — the five of the case studies
+plus `ratio_max` and `flux_elem`, the first primitives of the continuity
+mass-flux port. Two differences from the toy:
 
 - Its Fortran kernels live inside MOM6, whose modules must be built before
   flang can process them — so each entry names a pre-generated `dump` from
@@ -161,7 +161,8 @@ differences from the toy:
 - Its C++ sources are the real port's headers, so the manifest pins their
   include paths (`include_dirs`); the five case-study kernels are loops in
   the Fortran source, so their entries carry `pointize = true` (see the next
-  section) — `ratio_max`, a per-point function, needs no license.
+  section) — `ratio_max` and `flux_elem`, per-point procedures as written,
+  need no license.
 
 ```console
 $ groundline kernel list --kernels examples/turbo-stack.kernels.toml

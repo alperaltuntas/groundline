@@ -103,9 +103,10 @@ subscripts, non-`intent(in)` bases, chained `a%b%c` — refuses.
 
 The plain-DO write gate does not itself refuse one cross-iteration channel: a
 local scalar *read before its first write* would, in a sequential loop, carry
-the previous iteration's value. This cannot produce a wrong model either —
-[functionalize](functionalize.md) binds locals per iteration, so such a read
-prints as an **unbound name** and the generated Lean fails to elaborate.
-That is still a refusal — loud, and never a wrong model — just delivered by
-Lean instead of Python. (Recorded in `kir.py`'s docstring as part of the
-model's meaning.)
+the previous iteration's value. This cannot produce a wrong model —
+[functionalize](functionalize.md) binds locals per iteration, and since
+2026-09-05 it tracks which locals are in scope and **refuses** such a read
+itself (`read before it is assigned`). Before that, the read printed as an
+unbound name and the generated Lean failed to elaborate — the same loud
+outcome, delivered by the checker instead of Python. Either way: never a
+wrong model.

@@ -8,7 +8,7 @@ these sites fails loudly instead of producing a plausible-but-wrong model
 
 The catalog is complete as of this manual's writing — it was compiled by
 `grep -n "raise UnsupportedConstruct"` over the four trusted-base modules
-(95 sites), and each entry's message text is greppable in the source. Related
+(97 sites), and each entry's message text is greppable in the source. Related
 but distinct: a malformed *manifest* raises `ManifestError`
 ([manifest rules](manifest.md#general-rules)), and clang/file-system failures
 raise ordinary errors — neither is a subset refusal.
@@ -46,7 +46,7 @@ implies — the early-warning surface for dump-format drift (see
 | an unrecognized action statement (`action statement '<node>'`) | within a body, only assignment and the one-line logical IF statement are modeled |
 | an unrecognized `IfConstruct` child (`IfConstruct child '<node>'`) | if/elseif/else blocks only — no construct names, no other clauses |
 | `do concurrent` with a stride / plain `do` with a stride | a strided box is not the full index box the iteration schemas model |
-| an unsupported intrinsic type (`intrinsic type '<type>'`) or type spec (`type spec '<node>'`) | only `real`, `integer`, and (as dummies) derived types are declared into kernels |
+| an unsupported intrinsic type (`intrinsic type '<type>'`) or type spec (`type spec '<node>'`) | only `real`, `integer`, `logical`, and (as dummies) derived types are declared into kernels; a logical dummy is a `Bool` input (a bare IF guard), while logical locals and outputs refuse at print |
 | an unsupported declaration attribute (`attribute '<node>'`; whole-subroutine mode) | `intent` and `dimension` are understood; `optional`, `pointer`, etc. change semantics the model doesn't carry |
 | a dummy argument with no declaration (`undeclared dummy args`) | a parameter of unknown type/intent cannot be modeled |
 
@@ -66,7 +66,7 @@ implies — the early-warning surface for dump-format drift (see
 | the function found zero or several times in the dump (`found N definitions`) | unique address, as on the Fortran side |
 | a return type other than `void`, `Real`, or `double` (`must return void or a real scalar`) | two calling conventions are admitted: a `void` function returning through `Real &` parameters, or a real-returning function whose return value is the single output |
 | a non-void function that also has `Real &` parameters (`two output conventions`) | a return value *and* mutated arguments — the mirror of the Fortran refusal above |
-| parameter type other than `Real &`/`double &` or `const Real`/`const double` (pointers, const refs, mutable by-value, other types, …) | the [intent mapping](frontends.md) accepts exactly these spellings and nothing else |
+| parameter type other than `Real &`/`double &`, `const Real`/`const double`, or `const bool` (pointers, const refs, mutable by-value, other types, …) | the [intent mapping](frontends.md) accepts exactly these spellings and nothing else; `const bool` is a logical input |
 | a parameter with a default argument | a defaulted parameter changes the function's arity story; does not appear in the targeted kernel shape |
 | unexpected children of the function declaration, multiple bodies, or no body | structural guards on the JSON shape |
 | locals shadowing parameters (`locals shadow parameters`) | shadowing would silently redirect reads in the flat `let` model |
@@ -80,9 +80,9 @@ implies — the early-warning surface for dump-format drift (see
 | a `return` in non-tail position (`non-tail position (an early return …)`) | statements after it would run on some paths only, which the flat body cannot say; every path must end in exactly one tail return |
 | a declaration that is not a `VarDecl` (`declaration '<kind>'`) | only plain local variables are modeled |
 | a local of any type but `Real`/`double` (optionally const) (`local '<name>': type '<qual>'`) | only real scalars exist in the kernel IR |
-| a local without a copy-initializer (`= form`) | an uninitialized or direct/list-initialized local does not map to `let name := value` |
+| a local with a list/direct initializer (`Real w{e}`) | only the copy-initializer (`= e`, a `let`) and a bare declaration (`Real w;`, assigned later — its assignments are ordinary statements, a read before the first one refuses in functionalize) are modeled |
 | a local declared more than once | C++ block scoping does not map to the flat `Let` model; renaming would break the by-eye audit |
-| an assignment whose target is not a (reference) parameter | writes must go to outputs; anything else is outside the state-threading model |
+| an assignment whose target is not a (reference) parameter or a declared local | writes go to outputs or to the kernel's own locals; anything else is outside the state-threading model |
 | assignment/binary nodes with unexpected operand counts; `if` with an init-statement, condition variable, or `constexpr`; unexpected `if` child counts | structural guards on the JSON shape |
 
 ### Expressions and the cast allowlist
@@ -126,12 +126,11 @@ implies — the early-warning surface for dump-format drift (see
 | no `inout`/`out`/`result` parameters | nothing to return — a kernel with no outputs has no functional meaning |
 | a function result alongside other outputs (`two output conventions`) | the result is the *sole* output of a function kernel (a frontend never produces this; the gate closes the pass) |
 | a function result not assigned on every control-flow path (`not assigned on every control-flow path`) | the source would return an undefined value there — unlike an `inout`/`out` argument, a result has no caller-supplied value to fall back on |
-| a function result read before it is assigned (`read before it is assigned`) | an undefined value in the source; refused in Python rather than left to the checker |
-| a function result assigned in only one branch of a joined `if` (`only one branch of a joined IF`) | the merge would pair a value with an undefined one |
+| a function result, or a local, read before it is assigned (`read before it is assigned`) | an undefined value in the source; refused here rather than left to the checker (until 2026-09-05 the local case was the one refusal delegated to Lean, as an unbound name) |
+| a function result assigned in only some branches of a joined `if` (`only some branches of a joined IF`) | the merge would pair a value with an undefined one |
+| a local assigned on only some paths of a joined `if`, not bound before it, and read after the join (`only some paths`) | undefined on the other paths; the read scan is conservative (any occurrence inside a later `if` counts), so this may refuse spuriously but never mismodels — a local with a prior binding takes that binding on the other paths instead, and one nothing reads afterwards is simply dropped |
+| a statement inside a joined branch that is neither an assignment nor an `if` | the sequential merge is defined over assignments and nested ifs |
 | assignment to a name that is neither local nor output | an unmodeled state (a global, an index) would be silently dropped |
-| statements after an `if` with an elseif chain | the join's merge formula is binary by design ([the join](../concepts/functionalize.md#the-control-flow-join)) |
-| a joined branch containing anything but assignments (nested `if`s, …) | the merge is defined only over per-variable assignments |
-| assignment to a non-output inside a joined branch | a `let` may not escape its branch |
 | any other statement form | catch-all |
 
 ## Printer (`groundline/lean_printer.py`)
@@ -142,17 +141,21 @@ reachable only if a caller bypasses the normal pipeline order:
 | Trigger | Why it refuses |
 |---|---|
 | integer-valued `/` or `**` — both operands built from integer literals (`a * (2/3)`) | the source evaluates these in **truncating integer arithmetic** (2/3 is 0), which the model over ℝ cannot represent; a mixed real/int operand is fine (the integer promotes). The C++ twin refuses earlier, at the cast allowlist. Faithful integer semantics is [roadmap](../limits.md#integer-values-in-kernel-bodies) |
-| an integer **local** read in the modeled body | it would be modeled as a real, hiding any truncation its assignments perform. Integers as *addresses* — loop indices, bounds, subscripts — are unaffected: pointize consumes and drops them |
+| a non-real **local** in the modeled body (`non-real local(s)`) | an integer local would be modeled as a real, hiding any truncation its assignments perform; a logical local has no meaning over ℝ. Integers as *addresses* — loop indices, bounds, subscripts — are unaffected: pointize consumes and drops them |
 | a call the printer cannot spell (anything but `abs`/`min`/`max`) | no invented Lean spelling for an unmodeled callee |
 | an `ArrayRef` or `ComponentRef` surviving to printing | pointization was skipped or incomplete — printing them as bare names would silently change meaning |
-| a non-real parameter surviving to printing | the generated def's signature is `(… : ℝ)`; anything else must have been dropped or synthesized away |
+| a parameter that is neither real nor logical surviving to printing (`non-real, non-logical parameters`) | the generated def's binders are `ℝ` and `Bool`; a derived-type or integer parameter must have been dropped or synthesized away |
+| a non-real output (`non-real output(s)`) | the model returns reals; a logical `intent(out)` has no ℝ meaning |
 | a function kernel with no input parameters (`no input parameters`) | the result is not an input, so the binder list would be empty — a kernel with nothing to read has no arguments to model |
 | unprintable expression/functional nodes | catch-alls |
 
-## One refusal delegated to Lean
+## The refusal that used to be delegated to Lean
 
-One cross-iteration channel is deliberately left to the proof checker rather
-than the Python gate: a local scalar **read before its first write** in a
-plain-DO body (which would carry the previous iteration's value) prints as an
-unbound name, and the generated Lean **fails to elaborate**. Loud, and never
-a wrong model — see [Pointize](../concepts/pointize.md#one-gap-closed-by-the-checker).
+Until 2026-09-05 one cross-iteration channel was left to the proof checker
+rather than the Python gate: a local scalar **read before its first write** in
+a plain-DO body (which would carry the previous iteration's value) printed as
+an unbound name, and the generated Lean failed to elaborate. With the
+generalized join, functionalize now tracks which locals are in scope and
+refuses such a read itself (`read before it is assigned`) — the same loud
+outcome, delivered earlier — see
+[Pointize](../concepts/pointize.md#one-gap-closed-by-the-checker).

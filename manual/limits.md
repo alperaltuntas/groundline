@@ -91,9 +91,11 @@ Many kernels in the case-study code base guard their arithmetic per cell
 so the iteration schemas should extend — but the mask array enters the model
 as a per-cell input with its own rule-B-like story (a component array of the
 grid type, read at exactly the loop indices), and the generated defs grow a
-guard shape the printer and the by-eye audit must handle. Unstarted; refused
-today by the array-index gate (the mask subscripts `(i,j)` don't match a
-3-D nest's indices).
+guard shape the printer and the by-eye audit must handle. Scalar logical
+*arguments* as guards (`if (vol_CFL)`) are in since 2026-09-05, as `Bool`
+inputs; per-cell mask *arrays* are the open part — refused today by the
+array-index gate (the mask subscripts `(i,j)` don't match a 3-D nest's
+indices).
 
 ## More C++ surface
 

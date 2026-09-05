@@ -373,6 +373,20 @@ frontier-and-gate story real).
   previously generated def changed). The PR's other primitives
   (`flux_elem_point`, `continuity_convergence_point`) and its column kernels
   are the planned next tiers (DEVLOG 2026-09-05).
+  **`flux_elem` banked 2026-09-05 (later)** — the PPM face flux, the physics
+  every mass-flux column kernel calls per layer; the seventh pair. Three
+  constructs entered, two of them user-licensed semantics decisions: the
+  **generalized control-flow join** (branches run sequentially against copies
+  of the state, elseif chains and nested IFs merge recursively, locals
+  assigned in branches are `Let`-bound after the join, a local undefined on
+  some path is dropped when dead and refused when read — the CW84 one-shape
+  rule is now a special case and its def is byte-identical), **Bool inputs**
+  (logical/`const bool` parameters as bare guards, `Bool` binders), and
+  **mutable C++ locals** (bare declarations assigned later). Unreferenced
+  derived-type dummies are dropped in whole-procedure mode; a local read
+  before assignment now refuses in Python rather than in Lean. Point lemma:
+  `simp only [defs, neg_mul]` — the only delta is the documented unary-minus
+  parse asymmetry.
 - *Later:* kernels with cross-iteration structure (k-recurrences → induction —
   the genuinely sequential shapes the plain-DO gate refuses, e.g.
   `find_dz_for_eta`'s pressure accumulation), reductions (scalar

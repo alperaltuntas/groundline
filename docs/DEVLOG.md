@@ -14,6 +14,125 @@
 
 ---
 
+## 2026-09-05 (later) — Tier A item 2: `flux_elem` banked — the generalized join, Bool inputs, mutable C++ locals
+
+**The kernel.** `flux_elem` is the PPM face flux: for one candidate face
+velocity it computes the transport `uh` and its velocity derivative `duhdu`
+from the cell and edge thicknesses on both sides, the grid factors, `dt`,
+`visc_rem` and the porous face fraction. Every column kernel of PR 36 calls
+it once per layer, so it is the physics of the whole mass-flux family. It is
+an `elemental` subroutine with 21 dummies, three of them grid structs the
+body never reads, one a `logical` (`vol_CFL`). Its C++ twin
+`flux_elem_point` has the same 18 arithmetic arguments in the same order.
+
+**Step 0 — the refusals** (each peeled in turn on the production dump and
+the PR header): `intrinsic type 'Logical'` / `parameter 'vol_CFL': type
+'const bool'`; then the printer's non-real-parameter gate on `G`, `GV`, `US`;
+then functionalize's join gates — `statements after an IF with an elseif
+chain`, and locals assigned inside joined branches — and on the C++ side
+`local 'CFL' without a copy-initializer` and `assignment target must be a
+(reference) parameter`. Two of these were the deliberately restricted shapes
+the CW84 entry reserved as semantics decisions; the user licensed both
+before implementation.
+
+**The join, generalized** (`kir.functionalize`; `merge_if` / `branch_state`).
+The old rule admitted one shape — a single-branch IF assigning only to
+outputs — and merged per variable as `Cond(c, then, else)`. The new rule is
+the sequential semantics itself, stated once and applied recursively:
+
+- every branch body (then, each elseif, else — an absent else is an empty
+  branch) runs against a *copy* of the incoming state; assignments update
+  the copy, locals assigned in the branch are tracked in the copy (later
+  reads within the branch substitute them — inlining), and a nested IF
+  inside the branch merges recursively against the copy, with everything
+  after it (the rest of the branch, then the outer continuation) as its
+  continuation;
+- each variable some branch assigned becomes one conditional chain over the
+  branch conditions, conditions evaluated against the pre-IF state;
+- merged outputs update the state; merged locals are bound by `Let` right
+  after the join, in first-assignment order, so the following statements read
+  them by name — `let h_marg := if u > 0 then … else if u < 0 then … else
+  0.5 * (h_l_p1 + h_r)` in the generated def.
+
+The one genuinely new rule is for a local a branch defines and others do not.
+With a prior `Let` binding, the other paths keep it (`let w := if u > 0 then
+u else w` — Lean shadowing, saying exactly what the source does; pinned by
+`rebound_local`). With none, the local is undefined there: if nothing after
+the join reads it, it is dropped (`flux_elem`'s `CFL`, `curv_3`, `dh` —
+inlined where their branch read them, dead afterwards); if something does,
+functionalize refuses. The read scan (`_reads_before_redef`) is
+conservative — any occurrence inside a later IF counts as a read, an
+unconditional reassignment before any read ends the scan — so it can refuse
+spuriously and can never mismodel. Ruled out: emitting a `Let` for every
+branch-local unconditionally (a `let CFL := if u > 0 then … else <?>` would
+need a value the source does not have), and keeping the old one-shape rule
+with `flux_elem` special-cased (the CW84 shape is the single-branch,
+outputs-only instance of the new rule, and its def came out byte-identical).
+
+A second gate came with it: a read of a local that is not in scope now
+refuses in Python (`read before it is assigned`) instead of printing an
+unbound name for Lean to reject — functionalize tracks the in-scope locals
+(`bound`) anyway. The manual's "one refusal delegated to Lean" is history;
+the message is better and arrives earlier.
+
+**Bool inputs.** A `logical` dummy (`IntrinsicTypeSpec -> Logical`) and a
+`const bool` parameter become a parameter of type `logical`, printed as a
+`Bool` binder in its own group in declaration order — `(… dt : ℝ) (vol_cfl :
+Bool) (por_face_area : ℝ)` — and used as a bare guard (`if vol_cfl then`,
+Lean coerces). That is the only admitted use, and it is the only one the
+source type systems allow through the with-sema/clang trees anyway (a
+logical in arithmetic is a sema error; a bool in a `Real` expression is an
+`IntegralToFloating` cast the allowlist refuses). Logical locals and logical
+outputs refuse at print. `Bool` rather than `Prop`: a runtime truth value,
+decidable by construction, and the same on both sides.
+
+**Mutable C++ locals.** `Real CFL, curv_3, h_marg, dh;` — VarDecls with no
+`init` key — record the local only; `=` to a declared local is an ordinary
+`Assign`; list/direct initializers still refuse. Nothing else changed on that
+side: the merge machinery is shared, and `else if` — which the JSON keeps
+nested in the else slot — merges recursively into the same Cond chain flang's
+elseif branches produce. Both production defs came out with identical
+structure.
+
+**Dropped structs.** In whole-procedure mode a derived-type dummy the body
+never references is dropped (`_kernel_from_root`), as pointize drops unused
+parameters in loop mode; a referenced one still refuses at print (pinned by
+`uses_grid`). This is what lines the two binder lists up positionally.
+
+**Printer.** Binder groups by type; a `Cond` nested directly in a then-slot
+is parenthesized for readability (none existed before, so no generated def
+moved); output and local type gates.
+
+Dump-shape notes (Q1 ledger): `logical, intent(in) :: vol_CFL` is
+`IntrinsicTypeSpec -> Logical` + `AttrSpec -> IntentSpec -> Intent = In`; the
+bare guard is `Scalar -> Logical -> Expr = 'vol_cfl'` over a plain
+`Designator -> DataRef -> Name`, nothing new. clang: an uninitialized
+`VarDecl` simply lacks the `init` key; `if (vol_CFL)` is an
+`LValueToRValue` cast of the `DeclRefExpr` (type `bool`), so the allowlist
+needed nothing.
+
+Fixtures: `tests/f90/test_kernel_join_locals` (`face_flux`, the distilled
+shape — nested joins, a merged local, a dropped local, a dropped struct,
+`elemental`; `rebound_local`; refusal siblings `partial_local`,
+`logical_local`, `logical_out`, `read_unset`, `uses_grid`) and
+`tests/cpp/test_kernel_join_locals.cpp` (`face_flux_point`,
+`rebound_local_point`, `refuse_partial_local`, `refuse_bool_local`,
+`refuse_read_unset`, `refuse_list_init`). The three CW84-era join refusal
+tests were retired — each of their shapes is now supported and pinned as a
+golden — and replaced by the new boundary's refusal plus goldens for the
+elseif chain, the bound-after-join local, the nested join, and the dropped
+dead local. Manifest rows on both sides.
+
+Proof: `Groundline/FluxElem.lean`. The two generated defs differ in exactly
+one thing — the documented C++/Fortran unary-minus asymmetry in the `u < 0`
+branch (`-u * dt` is `-(u * dt)` in Fortran, `(-u) * dt` in C++) — so the
+point lemma is `simp only [<the two defs>, neg_mul]`, which unfolds,
+zeta-reduces the lets and normalizes both spellings to `-(u * dt)`. The
+kernel-level statement is the pointwise lift (per layer, `dt` and `vol_CFL`
+loop-invariant), as for `ratio_max`. Retroactive check: regenerating both
+modules changed no previously generated def — in particular the CW84 join
+def is byte-identical under the generalized merge.
+
 ## 2026-09-05 — TIM PR 36 (the continuity mass-flux port): gap analysis, and the first construct it pulls in — function-result kernels (`ratio_max`)
 
 **The occasion.** TIM PR 36 ("AMReX implementation of *_mass_flux") is the
