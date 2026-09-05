@@ -451,6 +451,11 @@ def _parse_type_decl(tds: Node) -> list[Param]:
             intent = kid.child("Intent").payload.lower()
         elif kid.name == "ArraySpec":
             rank = len(kid.children_named("ExplicitShapeSpec"))
+        elif kid.name == "Optional":
+            # Presence is the caller's precondition: the body is modeled as a
+            # function of the dummy's value whenever it runs, and a body that
+            # could branch on presence — a present() call — refuses anyway.
+            pass
         else:
             raise UnsupportedConstruct(f"attribute '{kid.name}'")
     return [Param(ent.child("Name").payload, type_, intent, rank)

@@ -220,6 +220,39 @@ def rebound_local_point (u q : ℝ) : ℝ :=
         self._refuse("refuse_list_init", "list/direct initializer")
 
 
+@needs_clang
+class TestMinMaxFixture:
+    """`amrex::max` / `amrex::min` (tests/cpp/test_kernel_minmax.cpp), whose
+    const-reference signature drags in `ExprWithCleanups`,
+    `MaterializeTemporaryExpr` and a `NoOp` qualification cast — all
+    unwrapped transparently. Three-argument max and `pow` pin the callee
+    gate."""
+
+    source = CPP_DIR / "test_kernel_minmax.cpp"
+
+    def test_printed_lean(self):
+        expected = """\
+def converge_point (h_prev flux_out flux_in dt iarea h_min : ℝ) : ℝ :=
+  max (h_prev - dt * iarea * (flux_out - flux_in)) (h_min)
+"""
+        assert print_kernel(extract_kernel(self.source, "converge_point")) == expected
+
+    def test_nested_min_max(self):
+        expected = """\
+def clamp_point (x lo hi : ℝ) : ℝ :=
+  min (max (x) (lo)) (hi)
+"""
+        assert print_kernel(extract_kernel(self.source, "clamp_point")) == expected
+
+    def test_three_argument_max_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="3 arguments"):
+            extract_kernel(self.source, "refuse_max_three")
+
+    def test_pow_callee_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="call to 'pow'"):
+            extract_kernel(self.source, "refuse_pow")
+
+
 # =============================================================================
 # Refusals (trusted base: refuse, never guess)
 # =============================================================================
@@ -267,11 +300,19 @@ class TestExprAllowlists:
         from groundline.kir import Var
         assert extract_expr(node) == Var("x")
 
-    def test_non_abs_callee_refused(self):
+    def test_non_intrinsic_callee_refused(self):
         node = {"kind": "CallExpr",
                 "inner": [_declref("pow", kind="FunctionDecl"), _declref("x")]}
         with pytest.raises(UnsupportedConstruct, match="call to 'pow'"):
             extract_expr(node)
+
+    def test_noop_cast_and_temporary_wrappers_unwrap(self):
+        from groundline.kir import Var
+        node = {"kind": "ExprWithCleanups", "inner": [
+            {"kind": "MaterializeTemporaryExpr", "inner": [
+                {"kind": "ImplicitCastExpr", "castKind": "NoOp",
+                 "inner": [_declref("x")]}]}]}
+        assert extract_expr(node) == Var("x")
 
     def test_modulo_opcode_refused(self):
         node = {"kind": "BinaryOperator", "opcode": "%",

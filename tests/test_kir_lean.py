@@ -145,9 +145,11 @@ class TestRecurrenceRefusalFixture:
     lowercases — Fortran is case-insensitive)."""
 
     def test_recurrence_refused(self):
+        # Since rule C admits read-only stencils, the recurrence refuses at
+        # the write: iteration k writes cell K+1 — not the iteration's own.
         kernel = extract_kernel(F90_DIR / "test_kernel_recurrence_ptree",
                                 "accumulate")
-        with pytest.raises(UnsupportedConstruct, match="not indexed exactly"):
+        with pytest.raises(UnsupportedConstruct, match="own cell"):
             pointize(kernel)
 
     def test_dump_lowercases_index_names(self):
@@ -310,6 +312,54 @@ def rebound_local (u q : ℝ) : ℝ :=
             print_kernel(extract_kernel(self.ptree, "uses_grid"))
 
 
+class TestStencilFixture:
+    """The continuity_convergence construct set (tests/f90/test_kernel_stencil):
+    rule C — a read-only neighbor stencil `flux(i-1,j,k)` → input `flux_im1`
+    (do concurrent only); rule B widened — a component array indexed by a
+    subset of the loop indices `g%iarea(i,j)` → input `iarea`; rule D — the
+    nest-invariant local `h_min` → input; `optional` dummies referenced by the
+    nest. Siblings pin the boundary."""
+
+    ptree = F90_DIR / "test_kernel_stencil_ptree"
+
+    def _nest1(self, sub):
+        return pointize(extract_loop_kernel(self.ptree, sub, 1, sub))
+
+    def test_extraction_shape(self):
+        pk = self._nest1("converge")
+        assert [(p.name, p.intent) for p in pk.params] == [
+            ("h", "inout"), ("flux", "in"), ("dt", "in"), ("h_in", "in"),
+            ("iarea", "in"), ("flux_im1", "in"), ("h_min", "in")]
+        assert pk.locals == ()          # h_min promoted to an input
+
+    def test_printed_lean(self):
+        expected = """\
+def converge (h flux dt h_in iarea flux_im1 h_min : ℝ) : ℝ :=
+  max (h_in - dt * iarea * (flux - flux_im1)) (h_min)
+"""
+        assert print_kernel(self._nest1("converge")) == expected
+
+    def test_stencil_in_plain_do_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="do concurrent nests only"):
+            self._nest1("stencil_plain_do")
+
+    def test_stencil_on_written_array_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="cross-iteration recurrence"):
+            self._nest1("stencil_written")
+
+    def test_subset_indexed_plain_array_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="not indexed by the loop indices"):
+            self._nest1("subset_plain_array")
+
+    def test_local_assigned_in_nest_stays_a_let(self):
+        expected = """\
+def local_written (h flux dt : ℝ) : ℝ :=
+  let w := dt * flux
+  h + w
+"""
+        assert print_kernel(self._nest1("local_written")) == expected
+
+
 class TestInlineNestsFixture:
     """Rule B addressing: loop nest #N of a subroutine, by source-order
     ordinal (counting both do-concurrent and plain-DO nests), with the
@@ -399,10 +449,36 @@ def _mini_kernel(body_stmt):
 
 class TestPointizeRefusals:
 
-    def test_offset_subscript_refused(self):
+    def test_offset_read_in_do_concurrent_is_a_stencil_input(self):
+        # Rule C: `a` is never written in the nest, so a(i+1) is loop-entry
+        # data — the synthesized input a_ip1 (do concurrent nest).
         stmt = Assign(ArrayRef("b", (Var("i"),)),
                       ArrayRef("a", (BinOp("add", Var("i"), IntLit("1")),)))
-        with pytest.raises(UnsupportedConstruct, match="not indexed exactly"):
+        pk = pointize(_mini_kernel(stmt))
+        assert [(p.name, p.intent) for p in pk.params] == \
+            [("b", "inout"), ("a_ip1", "in")]
+        assert pk.body == (Assign(Var("b"), Var("a_ip1")),)
+
+    def test_literal_first_offset_spelling_refused(self):
+        # Only `index ± literal` is admitted; `1 + i` is a different spelling.
+        stmt = Assign(ArrayRef("b", (Var("i"),)),
+                      ArrayRef("a", (BinOp("add", IntLit("1"), Var("i")),)))
+        with pytest.raises(UnsupportedConstruct, match="not indexed by the loop indices"):
+            pointize(_mini_kernel(stmt))
+
+    def test_stencil_name_collision_refused(self):
+        stmt = Assign(ArrayRef("b", (Var("i"),)),
+                      ArrayRef("a", (BinOp("sub", Var("i"), IntLit("1")),)))
+        k = _mini_kernel(stmt)
+        k = Kernel(k.name, k.params + (Param("a_im1", "real", "in", 0),),
+                   k.locals, k.body)
+        with pytest.raises(UnsupportedConstruct, match="collides"):
+            pointize(k)
+
+    def test_neighbor_write_refused(self):
+        stmt = Assign(ArrayRef("b", (BinOp("add", Var("i"), IntLit("1")),)),
+                      ArrayRef("a", (Var("i"),)))
+        with pytest.raises(UnsupportedConstruct, match="own cell"):
             pointize(_mini_kernel(stmt))
 
     def test_non_do_concurrent_body_refused(self):

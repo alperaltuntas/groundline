@@ -146,7 +146,23 @@ _TRANSPARENT_CASTS = {
     # A function name decaying to a function pointer in callee position. No
     # data value is involved; which function is called is unchanged.
     "FunctionToPointerDecay",
+    # A conversion that changes nothing but qualifiers (`Real` → `const Real`
+    # when a prvalue binds to a `const Real &` parameter, as amrex::max's
+    # do). The value is untouched by definition of the cast kind.
+    "NoOp",
 }
+
+# Single-child wrapper nodes clang inserts around an expression without
+# changing its value: the cleanup scope for temporaries a full-expression
+# created, and the temporary materialized to bind a prvalue to a const
+# reference. Both are unwrapped transparently.
+_TRANSPARENT_WRAPPERS = {"ExprWithCleanups", "MaterializeTemporaryExpr"}
+
+# Callees admitted as intrinsics, with their arity: amrex::Math::abs, and
+# amrex::max / amrex::min in their binary form (AMReX's three-argument
+# overloads refuse until a kernel needs them). Acceptance is on the
+# referenced declaration's name — the JSON drops the namespace qualifier.
+_CALLEES = {"abs": 1, "max": 2, "min": 2}
 
 _BINOPS = {"+": "add", "-": "sub", "*": "mul", "/": "div"}
 _CMPS = {"<": "lt", "<=": "le", ">": "gt", ">=": "ge", "==": "eq", "!=": "ne"}
@@ -171,6 +187,8 @@ def extract_expr(n: dict) -> Expr:
     kind = n.get("kind")
     if kind == "ImplicitCastExpr":
         return extract_expr(_unwrap_casts(n))
+    if kind in _TRANSPARENT_WRAPPERS:
+        return extract_expr(_only(n, kind))
     if kind == "DeclRefExpr":
         ref = n.get("referencedDecl", {})
         if ref.get("kind") not in _VAR_DECL_KINDS:
@@ -223,11 +241,12 @@ def _extract_udl(n: dict) -> RealLit:
 
 
 def _extract_call(n: dict) -> Call:
-    """Only ``amrex::Math::abs`` (one Real argument) is supported. NOTE: the
-    JSON drops the callee's nested-name-specifier — ``amrex::Math::abs``
-    surfaces as a DeclRefExpr whose ``referencedDecl`` is the FunctionDecl
-    named ``abs`` (found through amrex's ``using std::abs`` shadow) — so the
-    check is on the referenced declaration's name, not the source spelling."""
+    """The intrinsic callees of ``_CALLEES``, at their arity. NOTE: the JSON
+    drops the callee's nested-name-specifier — ``amrex::Math::abs`` surfaces
+    as a DeclRefExpr whose ``referencedDecl`` is the FunctionDecl named
+    ``abs`` (found through amrex's ``using std::abs`` shadow), ``amrex::max``
+    as the FunctionDecl ``max`` — so the check is on the referenced
+    declaration's name, not the source spelling."""
     kids = _inner(n)
     if not kids:
         raise UnsupportedConstruct("call with no callee")
@@ -235,12 +254,15 @@ def _extract_call(n: dict) -> Call:
     if callee.get("kind") != "DeclRefExpr":
         raise UnsupportedConstruct(f"callee node '{callee.get('kind')}'")
     fname = callee.get("referencedDecl", {}).get("name")
-    if fname != "abs":
-        raise UnsupportedConstruct(f"call to '{fname}' (only abs is supported)")
+    if fname not in _CALLEES:
+        raise UnsupportedConstruct(
+            f"call to '{fname}' (only {sorted(_CALLEES)} are supported)")
     args = kids[1:]
-    if len(args) != 1:
-        raise UnsupportedConstruct(f"abs with {len(args)} arguments")
-    return Call("abs", (extract_expr(args[0]),))
+    if len(args) != _CALLEES[fname]:
+        raise UnsupportedConstruct(
+            f"{fname} with {len(args)} arguments (only the "
+            f"{_CALLEES[fname]}-argument form is modeled)")
+    return Call(fname, tuple(extract_expr(a) for a in args))
 
 
 # --------------------------------------------------------------------------- #

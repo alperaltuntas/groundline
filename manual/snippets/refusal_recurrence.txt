@@ -1,1 +1,1 @@
-error: outside the supported kernel subset — accumulate: array reference p('i', None) is not indexed exactly by the loop indices ('k', 'i')
+error: outside the supported kernel subset — accumulate: write to a neighbor cell p(i, k+1) — every write must land in the iteration's own cell

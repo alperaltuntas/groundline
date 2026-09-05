@@ -1,0 +1,748 @@
+======================== Flang: parse tree dump ========================
+Program -> ProgramUnit -> Module
+| ModuleStmt -> Name = 'test_kernel_stencil'
+| SpecificationPart
+| | ImplicitPart -> ImplicitPartStmt -> ImplicitStmt -> 
+| | DeclarationConstruct -> SpecificationConstruct -> DerivedTypeDef
+| | | DerivedTypeStmt
+| | | | Name = 'grid_t'
+| | | ComponentDefStmt -> DataComponentDefStmt
+| | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | ComponentAttrSpec -> Allocatable
+| | | | ComponentOrFill -> ComponentDecl
+| | | | | Name = 'iarea'
+| | | | | ComponentArraySpec -> DeferredShapeSpecList -> int = '2'
+| | | EndTypeStmt -> Name = 'grid_t'
+| ModuleSubprogramPart
+| | ContainsStmt
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'converge'
+| | | | DummyArg -> Name = 'h'
+| | | | DummyArg -> Name = 'flux'
+| | | | DummyArg -> Name = 'dt'
+| | | | DummyArg -> Name = 'g'
+| | | | DummyArg -> Name = 'n'
+| | | | DummyArg -> Name = 'm'
+| | | | DummyArg -> Name = 'nz'
+| | | | DummyArg -> Name = 'h_in'
+| | | | DummyArg -> Name = 'hmin_opt'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> Type
+| | | | | | DerivedTypeSpec
+| | | | | | | Name = 'grid_t'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'g'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'n'
+| | | | | EntityDecl
+| | | | | | Name = 'm'
+| | | | | EntityDecl
+| | | | | | Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'h'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'flux'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = '0_4'
+| | | | | | | | LiteralConstant -> IntLiteralConstant = '0'
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'dt'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | AttrSpec -> Optional
+| | | | | EntityDecl
+| | | | | | Name = 'h_in'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | AttrSpec -> Optional
+| | | | | EntityDecl
+| | | | | | Name = 'hmin_opt'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'h_min'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | EntityDecl
+| | | | | | Name = 'i'
+| | | | | EntityDecl
+| | | | | | Name = 'j'
+| | | | | EntityDecl
+| | | | | | Name = 'k'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'h_min=0._8'
+| | | | | Variable = 'h_min'
+| | | | | | Designator -> DataRef -> Name = 'h_min'
+| | | | | Expr = '0._4'
+| | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | Real = '0.0'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> IfStmt
+| | | | | Scalar -> Logical -> Expr = 'present(hmin_opt)'
+| | | | | | FunctionReference -> Call
+| | | | | | | ProcedureDesignator -> Name = 'present'
+| | | | | | | ActualArgSpec
+| | | | | | | | ActualArg -> Expr = 'hmin_opt'
+| | | | | | | | | Designator -> DataRef -> Name = 'hmin_opt'
+| | | | | ActionStmt -> AssignmentStmt = 'h_min=hmin_opt'
+| | | | | | Variable = 'h_min'
+| | | | | | | Designator -> DataRef -> Name = 'h_min'
+| | | | | | Expr = 'hmin_opt'
+| | | | | | | Designator -> DataRef -> Name = 'hmin_opt'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> IfConstruct
+| | | | | IfThenStmt
+| | | | | | Scalar -> Logical -> Expr = 'present(h_in)'
+| | | | | | | FunctionReference -> Call
+| | | | | | | | ProcedureDesignator -> Name = 'present'
+| | | | | | | | ActualArgSpec
+| | | | | | | | | ActualArg -> Expr = 'h_in'
+| | | | | | | | | | Designator -> DataRef -> Name = 'h_in'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | | | NonLabelDoStmt
+| | | | | | | | LoopControl -> Concurrent
+| | | | | | | | | ConcurrentHeader
+| | | | | | | | | | ConcurrentControl
+| | | | | | | | | | | Name = 'k'
+| | | | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | | | | | | | ConcurrentControl
+| | | | | | | | | | | Name = 'j'
+| | | | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | Scalar -> Integer -> Expr = 'm'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | | | | | ConcurrentControl
+| | | | | | | | | | | Name = 'i'
+| | | | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | Scalar -> Integer -> Expr = 'n'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | | Block
+| | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))=max(h_in(int(i,kind=8),int(j,kind=8),int(k,kind=8))-dt*g%iarea(int(i,kind=8),int(j,kind=8))*(flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))),h_min)'
+| | | | | | | | | Variable = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | Expr = 'max(h_in(int(i,kind=8),int(j,kind=8),int(k,kind=8))-dt*g%iarea(int(i,kind=8),int(j,kind=8))*(flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))),h_min)'
+| | | | | | | | | | FunctionReference -> Call
+| | | | | | | | | | | ProcedureDesignator -> Name = 'max'
+| | | | | | | | | | | ActualArgSpec
+| | | | | | | | | | | | ActualArg -> Expr = 'h_in(int(i,kind=8),int(j,kind=8),int(k,kind=8))-dt*g%iarea(int(i,kind=8),int(j,kind=8))*(flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8)))'
+| | | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | | Expr = 'h_in(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | | | | DataRef -> Name = 'h_in'
+| | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | | | | | | Expr = 'dt*g%iarea(int(i,kind=8),int(j,kind=8))*(flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8)))'
+| | | | | | | | | | | | | | | Multiply
+| | | | | | | | | | | | | | | | Expr = 'dt*g%iarea(int(i,kind=8),int(j,kind=8))'
+| | | | | | | | | | | | | | | | | Multiply
+| | | | | | | | | | | | | | | | | | Expr = 'dt'
+| | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'dt'
+| | | | | | | | | | | | | | | | | | Expr = 'g%iarea(int(i,kind=8),int(j,kind=8))'
+| | | | | | | | | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | | | | | | | | DataRef -> StructureComponent
+| | | | | | | | | | | | | | | | | | | | | DataRef -> Name = 'g'
+| | | | | | | | | | | | | | | | | | | | | Name = 'iarea'
+| | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | | | | Expr = '(flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8)))'
+| | | | | | | | | | | | | | | | | Parentheses -> Expr = 'flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | | | | | | | Expr = 'flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | | | | | | | | | DataRef -> Name = 'flux'
+| | | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | | | | | | | | | | | Expr = 'flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | | | | | | | | | DataRef -> Name = 'flux'
+| | | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i-1_4'
+| | | | | | | | | | | | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | | | | | | | | | | | Expr = 'i'
+| | | | | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | | | | | | | | | | | Expr = '1_4'
+| | | | | | | | | | | | | | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | | | ActualArgSpec
+| | | | | | | | | | | | ActualArg -> Expr = 'h_min'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'h_min'
+| | | | | | | EndDoStmt -> 
+| | | | | EndIfStmt -> 
+| | | EndSubroutineStmt -> Name = 'converge'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'stencil_plain_do'
+| | | | DummyArg -> Name = 'h'
+| | | | DummyArg -> Name = 'flux'
+| | | | DummyArg -> Name = 'n'
+| | | | DummyArg -> Name = 'm'
+| | | | DummyArg -> Name = 'nz'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'n'
+| | | | | EntityDecl
+| | | | | | Name = 'm'
+| | | | | EntityDecl
+| | | | | | Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'h'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'flux'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = '0_4'
+| | | | | | | | LiteralConstant -> IntLiteralConstant = '0'
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | EntityDecl
+| | | | | | Name = 'i'
+| | | | | EntityDecl
+| | | | | | Name = 'j'
+| | | | | EntityDecl
+| | | | | | Name = 'k'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | NonLabelDoStmt
+| | | | | | LoopControl -> LoopBounds
+| | | | | | | Scalar -> Name = 'k'
+| | | | | | | Scalar -> Expr = '1_4'
+| | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | Scalar -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | | | NonLabelDoStmt
+| | | | | | | | LoopControl -> LoopBounds
+| | | | | | | | | Scalar -> Name = 'j'
+| | | | | | | | | Scalar -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Expr = 'm'
+| | | | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | | Block
+| | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | | | | | NonLabelDoStmt
+| | | | | | | | | | LoopControl -> LoopBounds
+| | | | | | | | | | | Scalar -> Name = 'i'
+| | | | | | | | | | | Scalar -> Expr = '1_4'
+| | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | Scalar -> Expr = 'n'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | | | | Block
+| | | | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))=flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | Variable = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | | | Expr = 'flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))-flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | Expr = 'flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | | | DataRef -> Name = 'flux'
+| | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | | | | | Expr = 'flux(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | | | | | DataRef -> Name = 'flux'
+| | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i-1_4'
+| | | | | | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | | | | | Expr = 'i'
+| | | | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | | | | | Expr = '1_4'
+| | | | | | | | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | EndDoStmt -> 
+| | | | | | | EndDoStmt -> 
+| | | | | EndDoStmt -> 
+| | | EndSubroutineStmt -> Name = 'stencil_plain_do'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'stencil_written'
+| | | | DummyArg -> Name = 'h'
+| | | | DummyArg -> Name = 'flux'
+| | | | DummyArg -> Name = 'n'
+| | | | DummyArg -> Name = 'm'
+| | | | DummyArg -> Name = 'nz'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'n'
+| | | | | EntityDecl
+| | | | | | Name = 'm'
+| | | | | EntityDecl
+| | | | | | Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'h'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = '0_4'
+| | | | | | | | LiteralConstant -> IntLiteralConstant = '0'
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'flux'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | EntityDecl
+| | | | | | Name = 'i'
+| | | | | EntityDecl
+| | | | | | Name = 'j'
+| | | | | EntityDecl
+| | | | | | Name = 'k'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | NonLabelDoStmt
+| | | | | | LoopControl -> Concurrent
+| | | | | | | ConcurrentHeader
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'k'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'j'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'm'
+| | | | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'i'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'n'
+| | | | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))=h(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))+flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | Variable = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | Expr = 'h(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))+flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | Add
+| | | | | | | | | Expr = 'h(int(i-1_4,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i-1_4'
+| | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | Expr = 'i'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | | | Expr = '1_4'
+| | | | | | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | Expr = 'flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'flux'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | EndDoStmt -> 
+| | | EndSubroutineStmt -> Name = 'stencil_written'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'subset_plain_array'
+| | | | DummyArg -> Name = 'h'
+| | | | DummyArg -> Name = 'dt2d'
+| | | | DummyArg -> Name = 'n'
+| | | | DummyArg -> Name = 'm'
+| | | | DummyArg -> Name = 'nz'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'n'
+| | | | | EntityDecl
+| | | | | | Name = 'm'
+| | | | | EntityDecl
+| | | | | | Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'h'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'dt2d'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | EntityDecl
+| | | | | | Name = 'i'
+| | | | | EntityDecl
+| | | | | | Name = 'j'
+| | | | | EntityDecl
+| | | | | | Name = 'k'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | NonLabelDoStmt
+| | | | | | LoopControl -> Concurrent
+| | | | | | | ConcurrentHeader
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'k'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'j'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'm'
+| | | | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'i'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'n'
+| | | | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))=h(int(i,kind=8),int(j,kind=8),int(k,kind=8))*dt2d(int(i,kind=8),int(j,kind=8))'
+| | | | | | | Variable = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | Expr = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))*dt2d(int(i,kind=8),int(j,kind=8))'
+| | | | | | | | Multiply
+| | | | | | | | | Expr = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | Expr = 'dt2d(int(i,kind=8),int(j,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'dt2d'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | EndDoStmt -> 
+| | | EndSubroutineStmt -> Name = 'subset_plain_array'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'local_written'
+| | | | DummyArg -> Name = 'h'
+| | | | DummyArg -> Name = 'flux'
+| | | | DummyArg -> Name = 'dt'
+| | | | DummyArg -> Name = 'n'
+| | | | DummyArg -> Name = 'm'
+| | | | DummyArg -> Name = 'nz'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'n'
+| | | | | EntityDecl
+| | | | | | Name = 'm'
+| | | | | EntityDecl
+| | | | | | Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'h'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'flux'
+| | | | | | ArraySpec -> ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'n'
+| | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'm'
+| | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | ExplicitShapeSpec
+| | | | | | | SpecificationExpr -> Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'dt'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'w'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> IntegerTypeSpec -> 
+| | | | | EntityDecl
+| | | | | | Name = 'i'
+| | | | | EntityDecl
+| | | | | | Name = 'j'
+| | | | | EntityDecl
+| | | | | | Name = 'k'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> DoConstruct
+| | | | | NonLabelDoStmt
+| | | | | | LoopControl -> Concurrent
+| | | | | | | ConcurrentHeader
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'k'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'nz'
+| | | | | | | | | | Designator -> DataRef -> Name = 'nz'
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'j'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'm'
+| | | | | | | | | | Designator -> DataRef -> Name = 'm'
+| | | | | | | | ConcurrentControl
+| | | | | | | | | Name = 'i'
+| | | | | | | | | Scalar -> Integer -> Expr = '1_4'
+| | | | | | | | | | LiteralConstant -> IntLiteralConstant = '1'
+| | | | | | | | | Scalar -> Integer -> Expr = 'n'
+| | | | | | | | | | Designator -> DataRef -> Name = 'n'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'w=dt*flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | Variable = 'w'
+| | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | | | Expr = 'dt*flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | Multiply
+| | | | | | | | | Expr = 'dt'
+| | | | | | | | | | Designator -> DataRef -> Name = 'dt'
+| | | | | | | | | Expr = 'flux(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'flux'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))=h(int(i,kind=8),int(j,kind=8),int(k,kind=8))+w'
+| | | | | | | Variable = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | Expr = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))+w'
+| | | | | | | | Add
+| | | | | | | | | Expr = 'h(int(i,kind=8),int(j,kind=8),int(k,kind=8))'
+| | | | | | | | | | Designator -> DataRef -> ArrayElement
+| | | | | | | | | | | DataRef -> Name = 'h'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'i'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'i'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'j'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'j'
+| | | | | | | | | | | SectionSubscript -> Integer -> Expr = 'k'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'k'
+| | | | | | | | | Expr = 'w'
+| | | | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | EndDoStmt -> 
+| | | EndSubroutineStmt -> Name = 'local_written'
+| EndModuleStmt -> Name = 'test_kernel_stencil'

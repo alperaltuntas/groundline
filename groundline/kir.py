@@ -43,16 +43,40 @@ Passes:
   a loop-invariant scalar component (``gv%h_to_z``; loop-invariant because
   the base must be an ``intent(in)`` derived-type dummy argument, which
   Fortran forbids modifying, and component writes refuse), and a component
-  array indexed exactly by the loop indices (``tv%spv_avg(i,j,k)``). The
-  synthesized parameter takes the component's own name (``gv%h_to_z`` →
-  ``h_to_z``) and is modeled as a real scalar — the one-time by-eye audit of
-  each generated def against its source covers the component's actual type.
-  Naming is deterministic and collision-checked: if the component name
-  collides with an existing parameter, local, loop index, or another
-  synthesized name from a different component, the extraction refuses rather
-  than renames. Synthesized parameters append after the real parameters in
-  first-use order (the order the scalarization walk first meets them). A
-  component read in any other shape refuses.
+  array indexed by loop indices — all of them (``tv%spv_avg(i,j,k)``) or a
+  subset (``g%iareat(i,j)`` in a k,j,i nest; the value is then the same for
+  every index the subscripts omit, and it is read-only for the same reason
+  the scalar is). The synthesized parameter takes the component's own name
+  (``gv%h_to_z`` → ``h_to_z``) and is modeled as a real scalar — the one-time
+  by-eye audit of each generated def against its source covers the
+  component's actual type. A component read in any other shape (offsets,
+  non-index subscripts) refuses.
+
+  Read-only neighbor stencils (rule C): an array reference whose subscripts
+  are the loop indices, some carrying a literal offset (``uh(i-1,j,k)``), is
+  admitted when the array is never written anywhere in the nest — the value
+  read is then loop-entry data, so the iteration still depends only on
+  loop-entry data — and when the nest is ``do concurrent`` (the license
+  granted 2026-09-05 is that narrow; the plain-DO case stays refused until
+  its schema-lemma variant is proved, though the existing lemma's
+  environment-in-the-closure form appears to cover it). Each distinct offset
+  pattern becomes a synthesized scalar ``in`` parameter named after the array
+  and the offsets, index by index (``uh(i-1,j,k)`` → ``uh_im1``,
+  ``a(i+1,j-1,k)`` → ``a_ip1_jm1``); the offset is absorbed into *which
+  input*, never into integer arithmetic inside the model. Writes must still
+  land in the iteration's own cell; an offset read of an array the nest
+  writes is a cross-iteration recurrence and refuses in either loop form.
+
+  Nest-invariant locals (rule D): a scalar local read in the nest but never
+  assigned in it (``h_min``, set before the loop) is an input of the point
+  function and becomes a synthesized ``in`` parameter under its own name and
+  declared type; a local the nest assigns stays a per-iteration local.
+
+  All synthesized names are collision-checked against the existing
+  parameters, locals, loop indices and each other: the extraction refuses
+  rather than renames (a silent rename would defeat the by-eye audit).
+  Synthesized parameters append after the real parameters in first-use order
+  (the order the scalarization walk first meets them).
 - :func:`functionalize` — turn the imperative body (assignments + structured
   ifs) into a single functional expression tree: local assignments become
   ``Let`` bindings, assignments to inout arguments update a symbolic state, and
@@ -261,10 +285,11 @@ def pointize(kernel: Kernel) -> Kernel:
 
     Every ``ArrayRef`` whose subscripts are exactly the loop indices (as plain
     ``Var``s) becomes ``Var(name)``; the supported ``ComponentRef`` shapes
-    become synthesized scalar ``in`` parameters (rule B — see the module
-    docstring for the naming/collision/ordering rules). The loop indices, the
-    bound variables, and any parameter no longer referenced by the pointized
-    body (grid structs, index ranges) are dropped.
+    (rule B), read-only neighbor stencils (rule C) and nest-invariant locals
+    (rule D) become synthesized scalar ``in`` parameters — see the module
+    docstring for the shapes and the naming/collision/ordering rules. The
+    loop indices, the bound variables, and any parameter no longer referenced
+    by the pointized body (grid structs, index ranges) are dropped.
 
     The nest may be a ``do concurrent`` (license: the source's independence
     assertion) or a plain, perfectly nested ``do`` (license: the schema lemma
@@ -298,24 +323,70 @@ def pointize(kernel: Kernel) -> Kernel:
         indices = tuple(names)
 
     param_by_name = {p.name: p for p in kernel.params}
-    local_names = {p.name for p in kernel.locals}
-    # Rule B: synthesized scalar params for component reads, keyed by
-    # (base, comp); insertion order = first-use order (the walk below is the
-    # deterministic statement/left-to-right expression order).
-    synth: dict[tuple[str, str], str] = {}
+    local_by_name = {p.name: p for p in kernel.locals}
+    local_names = set(local_by_name)
+    # Every name the nest assigns (scalar or array cell) — the write set the
+    # stencil and invariant-local rules are gated on.
+    written: set[str] = set()
 
-    def synth_param(e: ComponentRef) -> Var:
-        key = (e.base, e.comp)
+    def collect_writes(s: Stmt) -> None:
+        if isinstance(s, Assign):
+            written.add(s.target.name if isinstance(s.target, (Var, ArrayRef))
+                        else s.target.base)
+        elif isinstance(s, If):
+            for (_, body) in s.branches:
+                for x in body:
+                    collect_writes(x)
+            for x in s.orelse:
+                collect_writes(x)
+        elif isinstance(s, (Do, DoConcurrent)):
+            for x in s.body:
+                collect_writes(x)
+
+    for s in loop_body:
+        collect_writes(s)
+
+    # Synthesized scalar `in` params — rule B (component reads, keyed by
+    # (base, comp)), rule C (stencil reads, keyed by array + offset pattern),
+    # rule D (nest-invariant locals, keyed by name); insertion order =
+    # first-use order (the walk below is the deterministic statement /
+    # left-to-right expression order).
+    synth: dict[tuple, Param] = {}
+
+    def synth_param(key: tuple, name: str, type_: str, what: str) -> Var:
         if key not in synth:
-            name = e.comp
-            if (name in param_by_name or name in local_names
-                    or name in indices or name in synth.values()):
+            taken = (name in param_by_name or name in indices
+                     or (name in local_names and key[0] != "local")
+                     or any(p.name == name for p in synth.values()))
+            if taken:
                 raise UnsupportedConstruct(
-                    f"{kernel.name}: synthesized parameter '{name}' for the "
-                    f"component read {e.base}%{e.comp} collides with an "
-                    f"existing name")
-            synth[key] = name
-        return Var(synth[key])
+                    f"{kernel.name}: synthesized parameter '{name}' for {what} "
+                    f"collides with an existing name")
+            synth[key] = Param(name, type_, "in", 0)
+        return Var(synth[key].name)
+
+    def fmt_subs(parsed) -> str:
+        """Render parsed subscripts as the source spells them: ``(i, k+1)``."""
+        return "(" + ", ".join(
+            "?" if p is None else
+            (p[0] if p[1] == 0 else f"{p[0]}{'+' if p[1] > 0 else '-'}{abs(p[1])}")
+            for p in parsed) + ")"
+
+    def parse_subscripts(e: ArrayRef | ComponentRef):
+        """Each subscript as (index, offset): a plain loop index is offset 0,
+        ``index ± literal`` carries the literal; anything else is None."""
+        out = []
+        for sub in e.subscripts:
+            if isinstance(sub, Var) and sub.name in indices:
+                out.append((sub.name, 0))
+            elif (isinstance(sub, BinOp) and sub.op in ("add", "sub")
+                    and isinstance(sub.lhs, Var) and sub.lhs.name in indices
+                    and isinstance(sub.rhs, IntLit)):
+                off = int(sub.rhs.text) * (1 if sub.op == "add" else -1)
+                out.append((sub.lhs.name, off))
+            else:
+                out.append(None)
+        return out
 
     def scalarize_expr(e: Expr) -> Expr:
         if isinstance(e, ComponentRef):
@@ -325,25 +396,60 @@ def pointize(kernel: Kernel) -> Kernel:
                 raise UnsupportedConstruct(
                     f"{kernel.name}: component read {e.base}%{e.comp} — the "
                     f"base must be an intent(in) derived-type dummy argument")
+            what = f"the component read {e.base}%{e.comp}"
             if e.subscripts == ():
-                return synth_param(e)      # loop-invariant scalar component
+                return synth_param(("comp", e.base, e.comp), e.comp, "real", what)
             subs = tuple(s.name if isinstance(s, Var) else None
                          for s in e.subscripts)
-            if set(subs) == set(indices) and None not in subs:
-                return synth_param(e)      # component array at the own index
+            # Rule B, array form: indexed by loop indices — all of them, or a
+            # subset (then constant along the omitted ones); no offsets.
+            if (None not in subs and set(subs) <= set(indices)
+                    and len(set(subs)) == len(subs)):
+                return synth_param(("comp", e.base, e.comp), e.comp, "real", what)
             raise UnsupportedConstruct(
                 f"{kernel.name}: component read {e.base}%{e.comp}{subs} is "
                 f"neither a loop-invariant scalar nor a component array "
-                f"indexed exactly by the loop indices {indices}")
-        if isinstance(e, (RealLit, IntLit, Var)):
+                f"indexed by (a subset of) the loop indices {indices}")
+        if isinstance(e, (RealLit, IntLit)):
+            return e
+        if isinstance(e, Var):
+            # Rule D: a scalar local the nest reads but never assigns is
+            # loop-entry data — an input of the point function.
+            if (e.name in local_names and e.name not in written
+                    and e.name not in indices):
+                loc = local_by_name[e.name]
+                return synth_param(("local", e.name), e.name, loc.type,
+                                   f"the nest-invariant local {e.name}")
             return e
         if isinstance(e, ArrayRef):
-            subs = tuple(s.name if isinstance(s, Var) else None for s in e.subscripts)
-            if set(subs) == set(indices) and None not in subs:
-                return Var(e.name)
-            raise UnsupportedConstruct(
-                f"{kernel.name}: array reference {e.name}{subs} is not indexed "
-                f"exactly by the loop indices {indices}")
+            parsed = parse_subscripts(e)
+            names = [p[0] for p in parsed if p is not None]
+            if (None in parsed or set(names) != set(indices)
+                    or len(names) != len(indices)):
+                subs = tuple(s.name if isinstance(s, Var) else None
+                             for s in e.subscripts)
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: array reference {e.name}{subs} is not "
+                    f"indexed by the loop indices {indices} (plain, or with a "
+                    f"literal offset)")
+            if all(off == 0 for (_, off) in parsed):
+                return Var(e.name)          # the iteration's own cell
+            # Rule C: a read-only neighbor stencil.
+            if plain:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: neighbor read {e.name}{fmt_subs(parsed)} in "
+                    f"a plain-do nest — read-only stencils are admitted in do "
+                    f"concurrent nests only (the plain-DO schema-lemma variant "
+                    f"is not yet proved)")
+            if e.name in written:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: neighbor read {e.name}{fmt_subs(parsed)} of "
+                    f"an array the nest writes — a cross-iteration recurrence")
+            suffix = "".join(f"_{idx}{'p' if off > 0 else 'm'}{abs(off)}"
+                             for (idx, off) in parsed if off != 0)
+            return synth_param(("stencil", e.name, tuple(parsed)),
+                               e.name + suffix, "real",
+                               f"the neighbor read {e.name}{fmt_subs(parsed)}")
         if isinstance(e, Paren):
             return Paren(scalarize_expr(e.inner))
         if isinstance(e, Neg):
@@ -362,6 +468,15 @@ def pointize(kernel: Kernel) -> Kernel:
                 raise UnsupportedConstruct(
                     f"{kernel.name}: assignment to derived-type component "
                     f"{s.target.base}%{s.target.comp} is unsupported")
+            if isinstance(s.target, ArrayRef):
+                # Writes land in the iteration's own cell only — never in a
+                # neighbor's (that would be a recurrence in either loop form).
+                parsed = parse_subscripts(s.target)
+                if any(p is not None and p[1] != 0 for p in parsed):
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: write to a neighbor cell "
+                        f"{s.target.name}{fmt_subs(parsed)} — every write must "
+                        f"land in the iteration's own cell")
             if plain and isinstance(s.target, Var) and s.target.name in param_by_name:
                 raise UnsupportedConstruct(
                     f"{kernel.name}: assignment to scalar parameter "
@@ -417,11 +532,14 @@ def pointize(kernel: Kernel) -> Kernel:
 
     params = tuple(Param(p.name, p.type, p.intent, 0)
                    for p in kernel.params if p.name in used and p.name not in indices)
-    # Rule B: synthesized params append after the real params, in first-use
-    # order. Modeled as real scalars (see the module docstring).
-    params += tuple(Param(n, "real", "in", 0) for n in synth.values())
+    # Synthesized params (rules B, C, D) append after the real params, in
+    # first-use order.
+    params += tuple(synth.values())
+    promoted = {key[1] for key in synth if key[0] == "local"}
     locals_ = tuple(Param(p.name, p.type, None, 0)
-                    for p in kernel.locals if p.name in used and p.name not in indices)
+                    for p in kernel.locals
+                    if p.name in used and p.name not in indices
+                    and p.name not in promoted)
     return Kernel(kernel.name, params, locals_, body)
 
 
