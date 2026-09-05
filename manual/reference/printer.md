@@ -73,6 +73,10 @@ def <name> (<params> : ℝ) : ℝ × … :=
 The "Outputs" line **derives from the actual intents** of the kernel's output
 parameters (deduplicated, declaration order) — it used to hardcode
 `intent(inout)` until a kernel with `intent(out)` outputs exposed the lie.
+A **function kernel** prints ``Result `r` — the function result, modeled
+functionally over ℝ.`` instead, and its binder list carries only the
+arguments: the caller supplies no value for the result, so it is not a
+parameter of the def (a function kernel with no arguments at all refuses).
 
 `print_module` emits: two targeted Mathlib imports (`Mathlib.Data.Real.Basic`,
 `Mathlib.Tactic.Ring` — never a blanket `import Mathlib`), three linter

@@ -8,7 +8,7 @@ these sites fails loudly instead of producing a plausible-but-wrong model
 
 The catalog is complete as of this manual's writing — it was compiled by
 `grep -n "raise UnsupportedConstruct"` over the four trusted-base modules
-(77 sites), and each entry's message text is greppable in the source. Related
+(95 sites), and each entry's message text is greppable in the source. Related
 but distinct: a malformed *manifest* raises `ManifestError`
 ([manifest rules](manifest.md#general-rules)), and clang/file-system failures
 raise ordinary errors — neither is a subset refusal.
@@ -25,7 +25,11 @@ implies — the early-warning surface for dump-format drift (see
 |---|---|
 | an expected child node is absent (`expected child '<name>' under '<node>'`) | the dump shape moved, or the construct is a variant the walker has not been taught; guessing a different child would misread the tree |
 | a node expected to have exactly one child has several (`expected exactly one child`) | same — structural ambiguity is never resolved by picking one |
-| a subroutine is found zero or several times (`found N definitions`) | the kernel's address must be unique to be meaningful |
+| a subroutine or function is found zero or several times (`found N definitions`) | the kernel's address must be unique to be meaningful |
+| a procedure prefix that is not a bare keyword (`prefix 'DeclarationTypeSpec' on 'FunctionStmt'`) | a type prefix (`real function f(x)`) declares the result's type outside the specification part — dropping it would lose a declaration. Keyword prefixes (`pure`, `elemental`, `recursive`, …) constrain how the procedure may be used without changing what its body computes, and are read past |
+| a function without a `result(name)` clause (`has no result(name) clause`) | the function name would double as the result variable — a different declaration story, unsupported until a kernel needs it |
+| a function whose result variable is not declared in the specification part (`result variable '<r>' is not declared`) | its type is unknown |
+| a function with `intent(inout)`/`intent(out)` dummies (`two output conventions`) | a result *and* mutated arguments would give the kernel two output channels; the C++ side refuses the mirror shape |
 | `LoopBounds` without a leading index name | unrecognized loop-control shape |
 | an unrecognized loop control (`loop control '<node>'`) | only `do concurrent` headers and plain counted `do` loops are modeled |
 
@@ -60,7 +64,8 @@ implies — the early-warning surface for dump-format drift (see
 | Trigger | Why it refuses |
 |---|---|
 | the function found zero or several times in the dump (`found N definitions`) | unique address, as on the Fortran side |
-| non-`void` return type | the supported kernel shape returns through `Real &` parameters; a return value is a different calling convention |
+| a return type other than `void`, `Real`, or `double` (`must return void or a real scalar`) | two calling conventions are admitted: a `void` function returning through `Real &` parameters, or a real-returning function whose return value is the single output |
+| a non-void function that also has `Real &` parameters (`two output conventions`) | a return value *and* mutated arguments — the mirror of the Fortran refusal above |
 | parameter type other than `Real &`/`double &` or `const Real`/`const double` (pointers, const refs, mutable by-value, other types, …) | the [intent mapping](frontends.md) accepts exactly these spellings and nothing else |
 | a parameter with a default argument | a defaulted parameter changes the function's arity story; does not appear in the targeted kernel shape |
 | unexpected children of the function declaration, multiple bodies, or no body | structural guards on the JSON shape |
@@ -70,7 +75,9 @@ implies — the early-warning surface for dump-format drift (see
 
 | Trigger | Why it refuses |
 |---|---|
-| any statement other than a declaration, an assignment, or an `if` (`statement '<kind>'`) — so `for`, `while`, `+=`, `return`, … | the C++ subset mirrors the Fortran one: straight-line assignments and structured ifs |
+| any statement other than a declaration, an assignment, an `if`, or (in a non-void kernel) a tail `return` (`statement '<kind>'`) — so `for`, `while`, `+=`, … | the C++ subset mirrors the Fortran one: straight-line assignments and structured ifs |
+| a `return` in a void kernel (`return statement in a void kernel`) / a `return` without a value (`return without a value`) | the return value is the output of a non-void kernel and nothing else |
+| a `return` in non-tail position (`non-tail position (an early return …)`) | statements after it would run on some paths only, which the flat body cannot say; every path must end in exactly one tail return |
 | a declaration that is not a `VarDecl` (`declaration '<kind>'`) | only plain local variables are modeled |
 | a local of any type but `Real`/`double` (optionally const) (`local '<name>': type '<qual>'`) | only real scalars exist in the kernel IR |
 | a local without a copy-initializer (`= form`) | an uninitialized or direct/list-initialized local does not map to `let name := value` |
@@ -116,7 +123,11 @@ implies — the early-warning surface for dump-format drift (see
 
 | Trigger | Why it refuses |
 |---|---|
-| no `inout`/`out` parameters | nothing to return — a kernel with no outputs has no functional meaning |
+| no `inout`/`out`/`result` parameters | nothing to return — a kernel with no outputs has no functional meaning |
+| a function result alongside other outputs (`two output conventions`) | the result is the *sole* output of a function kernel (a frontend never produces this; the gate closes the pass) |
+| a function result not assigned on every control-flow path (`not assigned on every control-flow path`) | the source would return an undefined value there — unlike an `inout`/`out` argument, a result has no caller-supplied value to fall back on |
+| a function result read before it is assigned (`read before it is assigned`) | an undefined value in the source; refused in Python rather than left to the checker |
+| a function result assigned in only one branch of a joined `if` (`only one branch of a joined IF`) | the merge would pair a value with an undefined one |
 | assignment to a name that is neither local nor output | an unmodeled state (a global, an index) would be silently dropped |
 | statements after an `if` with an elseif chain | the join's merge formula is binary by design ([the join](../concepts/functionalize.md#the-control-flow-join)) |
 | a joined branch containing anything but assignments (nested `if`s, …) | the merge is defined only over per-variable assignments |
@@ -135,6 +146,7 @@ reachable only if a caller bypasses the normal pipeline order:
 | a call the printer cannot spell (anything but `abs`/`min`/`max`) | no invented Lean spelling for an unmodeled callee |
 | an `ArrayRef` or `ComponentRef` surviving to printing | pointization was skipped or incomplete — printing them as bare names would silently change meaning |
 | a non-real parameter surviving to printing | the generated def's signature is `(… : ℝ)`; anything else must have been dropped or synthesized away |
+| a function kernel with no input parameters (`no input parameters`) | the result is not an input, so the binder list would be empty — a kernel with nothing to read has no arguments to model |
 | unprintable expression/functional nodes | catch-alls |
 
 ## One refusal delegated to Lean

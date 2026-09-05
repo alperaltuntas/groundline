@@ -150,7 +150,8 @@ equivalence holds. See [Wire verification into CI](howto/ci.md).
 
 The production manifest,
 [`examples/turbo-stack.kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/turbo-stack.kernels.toml),
-declares the five MOM6 ⇄ TIM kernel pairs of the case studies. Two
+declares the six MOM6 ⇄ TIM kernel pairs — the five of the case studies plus
+`ratio_max`, the first primitive of the continuity mass-flux port. Two
 differences from the toy:
 
 - Its Fortran kernels live inside MOM6, whose modules must be built before
@@ -158,8 +159,9 @@ differences from the toy:
   the real model build instead of a `source`, and the manifest's
   `[fortran] dumps` points at that build's dump directory.
 - Its C++ sources are the real port's headers, so the manifest pins their
-  include paths (`include_dirs`); every Fortran kernel is a loop in the
-  source, so every entry carries `pointize = true` (see the next section).
+  include paths (`include_dirs`); the five case-study kernels are loops in
+  the Fortran source, so their entries carry `pointize = true` (see the next
+  section) — `ratio_max`, a per-point function, needs no license.
 
 ```console
 $ groundline kernel list --kernels examples/turbo-stack.kernels.toml
@@ -211,6 +213,6 @@ The same function as the point subroutine — so its equivalence theorem
 against the C++ port would be the same one-line `rfl`. What makes the
 loop-to-point reduction legitimate (the loop's `do concurrent` independence
 assertion here; a proved schema lemma for plain `do` loops) is the subject of
-[the Pointize concept page](concepts/pointize.md). All five production
-kernels are loops banked under this license; the manifest states it out loud
-each time.
+[the Pointize concept page](concepts/pointize.md). All five case-study
+production kernels are loops banked under this license; the manifest states
+it out loud each time.

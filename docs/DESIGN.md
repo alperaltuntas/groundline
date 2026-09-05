@@ -361,6 +361,18 @@ frontier-and-gate story real).
   `render_snippets.sh`) and pinned against fresh runs by
   `tests/test_manual.py`, so the manual cannot rot silently. `docs/` remains
   the engineering record; the site links to it. See the DEVLOG entry.
+  **Function-result kernels landed 2026-09-05** — the first construct pulled
+  in by TIM PR 36 (the AMReX port of the continuity mass-flux family). A
+  Fortran `function … result(r)` and a `Real`-returning C++ point function
+  extract as kernels whose single output is the result: a `result`-intent
+  parameter **the caller supplies no value for** — unbound until assigned, so a read
+  before assignment, a path that never assigns it, and a one-sided join all
+  refuse; a result alongside `inout`/`out` outputs refuses on both sides. C++
+  `return` is admitted in tail position only. `ratio_max` /
+  `ratio_max_point` banked as the sixth pair (point lemma `rfl`; no
+  previously generated def changed). The PR's other primitives
+  (`flux_elem_point`, `continuity_convergence_point`) and its column kernels
+  are the planned next tiers (DEVLOG 2026-09-05).
 - *Later:* kernels with cross-iteration structure (k-recurrences → induction —
   the genuinely sequential shapes the plain-DO gate refuses, e.g.
   `find_dz_for_eta`'s pressure accumulation), reductions (scalar

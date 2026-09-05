@@ -21,6 +21,13 @@ that evaluates to the tuple of output values.
 - **Structured `if`/`elseif`/`else`** at the *end* of a path becomes a
   functional if-expression, each branch ending by materializing the output
   tuple.
+- **A function result** (Fortran `result(name)`; a C++ return value) is the
+  single output and, unlike an `inout`/`out` argument, **the caller supplies
+  no value for it**: it starts undefined, and the model starts it unbound. So
+  reading it before its first assignment,
+  leaving it unassigned on some path, or assigning it on only one side of a
+  join all refuse — each would model an undefined value. A result alongside
+  other outputs refuses too (one output convention per kernel).
 
 For a straight-line kernel this yields exactly the shape a Lean-literate
 reader would write by hand — compare `GeneratedFtn.lean`'s `ppm_limit_pos`

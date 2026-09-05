@@ -69,8 +69,14 @@ stable.
 
 **Two extraction modes** (one spec type, `FortranKernelSpec`):
 
-- *whole subroutine* — the subroutine's declarations become params/locals
-  (undeclared dummies refuse), its execution part becomes the body;
+- *whole subroutine or function* — the procedure's declarations become
+  params/locals (undeclared dummies refuse), its execution part becomes the
+  body. A **function**'s `result(name)` variable becomes the kernel's single
+  output — a parameter of intent `result`, absent from the printed binder
+  list because the caller supplies no value for it (dump shape: `FunctionStmt` lists
+  the dummies as bare `Name` children and the result under `Suffix -> Name`).
+  A function without a `result` clause, or with a type prefix, refuses;
+  keyword prefixes (`pure`, `elemental`, …) are read past;
 - *inline loop nest* (`nest = N`, `def_name`) — loop nest #N by source-order
   ordinal; the enclosing subroutine's declarations are inherited
   *tolerantly* — a declaration outside the subset poisons only its own names,
@@ -116,6 +122,17 @@ parameters in declaration order. The mapping keys on the *qualType
 spellings*: `Real` (amrex's alias, as the production headers spell it) and
 plain `double` (as the quickstart's standalone `.cpp` spells it) are the two
 accepted real-scalar types.
+
+**Two calling conventions, never mixed.** A `void` function's outputs are
+its `Real &` parameters, as above. A `Real`/`double`-returning function's
+return value is the single output: the extractor turns each `return e` into
+an assignment to a `result`-intent parameter named after the function
+(Fortran's own default for a result variable), and admits `return` **only in
+tail position** — the last statement of the body, or of a branch of an `if`
+that is itself in tail position — so every path ends in exactly one return.
+An early return refuses at extraction; a path that falls off the end refuses
+in functionalize (the result is unassigned there); a non-void function that
+also has `Real &` parameters refuses.
 
 **No pointize.** The C++ kernels this frontend targets are already per-point
 scalar functions, so extraction emits a rank-0 `Kernel` directly;

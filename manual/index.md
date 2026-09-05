@@ -42,8 +42,9 @@ Nothing in the pipeline is tied to any particular application — the
 manifest can point at your own code. groundline grew inside the **TURBO**
 project, though, where kernels of the MOM6 ocean model are being ported to a
 new C++/AMReX infrastructure (TIM), and that port is the manual's running
-case study: all five point kernels ported so far are covered, each with a
-checked equivalence theorem and a clean axioms audit. The
+case study: the five point kernels of the original port are covered, plus
+the first primitive of the continuity mass-flux port, each with a checked
+equivalence theorem and a clean axioms audit. The
 [case studies](case-studies/ppm-limit-pos.md) tell their stories — including
 the real bug the machinery caught.
 

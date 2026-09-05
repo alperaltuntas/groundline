@@ -14,6 +14,154 @@
 
 ---
 
+## 2026-09-05 — TIM PR 36 (the continuity mass-flux port): gap analysis, and the first construct it pulls in — function-result kernels (`ratio_max`)
+
+**The occasion.** TIM PR 36 ("AMReX implementation of *_mass_flux") is the
+merge of five sub-branches: twelve orchestration routines
+(`continuity_*_convergence`, `*_flux_thickness`, `set_*_BT_cont`,
+`*_flux_adjust`, `*_BT_mass_flux`, `*_mass_flux`; zonal + meridional) plus
+three new per-point primitives in `mom_continuity_ppm_kernel.hpp`:
+`flux_elem_point` (↔ the elemental `flux_elem`, where the PPM face-flux
+physics lives), `ratio_max_point` (↔ the pure function `ratio_max`) and
+`continuity_convergence_point` (↔ the convergence loop body). OBC is out of
+the port's scope (it aborts on a non-null OBC pointer; every OBC branch is
+commented out). Structurally the port maps Fortran's `do concurrent (j)` with
+inner `do k ; do concurrent (I)` passes onto a 2-D `ParallelFor` over (i,j)
+with a sequential `for k` inside, fusing several Fortran k-loops into one —
+order-preserving in k, so real-number equivalence holds, but a proof has to
+absorb the fusion.
+
+**Step 0 — the refusals scoped it.** A scratch probe manifest ran both
+extractors on the production dump and the PR's header. Nothing passed. First
+refusal per side: `flux_elem` — `intrinsic type 'Logical'` /
+`parameter 'vol_CFL': type 'const bool'`; `ratio_max` — `found 0 definitions`
+(a *function*, not a subroutine) / `kernel must return void`;
+`continuity_zonal_convergence` nest 1 — `references 'hin' — attribute
+'Optional'` / `must return void`; `zonal_flux_thickness` nest 1 — `call to
+'present'` / no point function at all (the body is inlined in the lambda);
+the column kernels — `present`, `CallStmt` (calls to `flux_elem`), chained
+OBC components / 2-D lambdas carrying `for k` folds.
+
+**The plan, in tiers** (recorded here so the next entries have a frame).
+*Tier A — the three primitives*, each a bank-kernel job: A1 `ratio_max`
+(function results on both sides — this entry); A2 `flux_elem` (logical/bool
+parameters used as bare conditions, the if/elseif join with locals assigned in
+branches and read after — a widening of the deliberately restricted join,
+i.e. a semantics decision for the user — and C++ declared-uninitialized locals
+assigned later); A3 `continuity_convergence` (`optional` on an intent(in)
+dummy, the read-only neighbor stencil `uh(I-1,j,k)` → a synthesized input as
+the Limits page sketched, component arrays indexed by a *subset* of the loop
+indices, nest-invariant locals set before the loop as inputs, `amrex::max`).
+*Tier B — the column kernels* (`zonal_BT_mass_flux` → `set_zonal_BT_cont` →
+`zonal_mass_flux`'s j-body). The key observation: **both sides iterate k
+sequentially in the same order** — Fortran's `do k ; do concurrent (I)` is,
+per column, a sequential fold over k, and so is the C++ `for k` — so the
+honest model on both sides is a fold over k with a per-column state tuple,
+and equivalence is fold-congruence from step-equivalence (plus one
+fold-fusion lemma for the C++'s fused loops). That is *not* the
+sequential-vs-unordered question the Limits page reserves for reductions;
+the order is shared. Also needed there: calls to banked primitives as
+applications of their generated defs (composition through Tier A's
+theorems), masks on `do concurrent`, `present(x)` as a Bool input (constant
+per call, exactly the C++'s `.p != nullptr` flags), manifest-declared
+hypotheses that prune dead OBC branches and appear in the theorem, and C++
+lambda extraction. *Tier C* — `*_flux_adjust`, a 20-step Newton/bisection
+fold with per-column convergence flags (Fortran exits the row when no column
+is active, the C++ freezes columns individually) — deferred to the PR's
+capture tests. One review suggestion for the PR: factor `*_flux_thickness`'s
+lambda body into a `flux_thickness_point` primitive (it is `flux_elem`'s
+`h_marg` / bracket math behind a `marginal` switch); that alone makes it
+provable with the existing C++ frontend.
+
+**A1 landed — function-result kernels.** The kernel IR's second calling
+convention: a Fortran `function … result(r)` and a `Real`-returning C++
+point function extract as kernels whose single output is the result.
+
+Semantics decisions, and why:
+
+- **A result is the sole output, and the caller supplies no value for it.**
+  An `inout`/`out` argument arrives holding the caller's value, which the body
+  may read; a result variable starts undefined. It travels as a
+  `Param` of intent `result` (appended after the dummies); `functionalize`
+  starts it *unbound* rather than at `Var(r)`, so three shapes refuse that a
+  plain `inout` would silently model: a read before the first assignment
+  ("read before it is assigned"), a control-flow path that never assigns it
+  ("not assigned on every control-flow path" — the source returns an
+  undefined value there), and a joined IF assigning it on one side only. The
+  read-before-assign case could have been left to Lean (an unbound name), as
+  the local-read gap is; it is refused in Python because it is cheap and
+  the message is better. A result alongside `inout`/`out` outputs refuses on
+  both sides ("two output conventions") — one output channel per kernel,
+  which keeps the theorem statement shape uniform.
+- **Naming.** Fortran supplies the name (`result(ratio)`); the C++ return
+  value has none, so it is named after the function — Fortran's own default
+  for a result variable — and collision-checked against parameters and
+  locals. The name only ever appears in the doc comment: the printed def's
+  binder list carries the *inputs* only (`def ratio_max (a b maxrat : ℝ) : ℝ`),
+  the first def whose signature is not "outputs are also inputs".
+- **C++ `return` only in tail position** — the last statement of the body or
+  of a branch of an `if` that is itself in tail position — so every path ends
+  in exactly one return. An early return refuses at extraction; a tail `if`
+  without `else` extracts and then refuses in `functionalize` (the
+  fall-through path never assigns the result) — one gate, both languages.
+- **Prefixes.** `SubroutineStmt`/`FunctionStmt` prefixes were never looked at
+  (no banked kernel had one). Now an explicit allowlist: the keyword prefixes
+  `Pure`, `Elemental`, `Impure`, `Recursive`, `Non_Recursive`, `Module`
+  constrain how a procedure may be used without changing what its body
+  computes and are read past; a `DeclarationTypeSpec` prefix
+  (`real(8) function f(a) result(r)`) declares the result's type outside the
+  specification part and refuses rather than being dropped. Elemental is
+  admitted now because it is a keyword like the others, not because a kernel
+  needs it yet (`flux_elem` will).
+- **A function without a `result` clause refuses** — the function name
+  doubling as the result variable is a different declaration story;
+  unsupported until a kernel needs it.
+
+Considered and ruled out: a `Kernel.result` field (a `Param` intent keeps the
+`Kernel` shape and both frontends' seam unchanged; `functionalize` already
+keyed outputs on intent); admitting no-`result`-clause functions
+(unexercised); refusing the C++ tail-`if`-without-`else` at extraction
+(functionalize's every-path gate already says exactly why).
+
+Dump-shape notes (Q1 ledger): a `FunctionStmt` lists its dummies as **bare
+`Name` children** after the function's own name, where `SubroutineStmt` wraps
+them in `DummyArg -> Name`; the result sits under `Suffix -> Name`; `pure` is
+`PrefixSpec -> Pure`; a type prefix is `PrefixSpec -> DeclarationTypeSpec ->
+IntrinsicTypeSpec -> Real`. clang side: `ReturnStmt` has exactly one child
+expression, and `return maxrat;` for a `const Real` by-value parameter
+carries only `LValueToRValue` (no `NoOp` qualification cast) — the cast
+allowlist needed nothing; the function's `qualType` reads
+`Real (const Real, const Real, const Real) noexcept`.
+
+Fixtures: `tests/f90/test_kernel_function` (`capped_ratio` — the supported
+shape with a local — plus five refusal siblings: no result clause, type
+prefix, result unassigned on a path, result read before assignment, an
+`intent(inout)` dummy alongside the result) and
+`tests/cpp/test_kernel_function.cpp` (`capped_ratio_point` plus `refuse_*`:
+early return, tail if without else, `Real&` alongside a return value, bare
+`return` in a void kernel). Regenerating the f90 corpus left every existing
+dump byte-identical (same flang; only `PROVENANCE`'s timestamp moved).
+Manifest rows in both `MANIFEST.md`s; 19 new tests.
+
+Proof: `Groundline/RatioMax.lean`. The two generated defs are identical
+modulo name (`if |a| > |maxrat * b| then maxrat else a / b`), so the point
+lemma is `rfl`; the kernel-level statement is the pointwise lift over any
+index set (`funext`), which is how the mass-flux callers use it — one
+evaluation per column — and all the point subset can say about them today.
+Retroactive check: regenerating both modules changed **no previously
+generated def** (`GeneratedFtn.lean` and `GeneratedCpp.lean` each grew by
+exactly the new def) — even though the C++ side now reads the PR's header.
+
+Practical notes. The production manifest's C++ sources are the TIM submodule
+(`submodules/infra/TIM`, remote `mwaxmonsky/TIM`, HEAD `fe721eaa`, which is
+not on TURBO-ESM `main`), which predates the PR; with the user's OK the
+submodule working tree was checked out at PR 36's head (`pull/36/head`,
+`3f46e261`) so `generate`/`verify` see `ratio_max_point` without touching the
+manifest. The submodule pointer change is deliberately *not* part of this
+work's commit — revert with `git checkout fe721eaa` in the submodule, or bump
+it once the PR merges. The production dump (2026-05-28) is current for
+`MOM_continuity_PPM.F90` (last source change 2026-05-20).
+
 ## 2026-08-01 (later still) — A wrong-model bug found by a precedence question: integer values now refuse
 
 A user question — "does Fortran/C++ operator precedence differ, and does the

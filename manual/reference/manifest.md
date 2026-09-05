@@ -84,8 +84,10 @@ pointize = true
 
 - `name` (required) — the entry's identity, and (for inline-loop entries) the
   generated def's name.
-- `fortran = { dump | source, subroutine [, nest [, def_name]] }` — exactly
-  one of:
+- `fortran = { dump | source, subroutine [, nest [, def_name]] }` —
+  `subroutine` names the procedure, a subroutine *or a function* (a
+  function's `result(name)` variable is the kernel's single output); and
+  exactly one of:
     - `dump` — a pre-generated with-sema flang dump, resolved under
       `[fortran].dumps`. For kernels inside a real codebase, whose modules
       must be built before flang can run.
@@ -118,7 +120,7 @@ doc comments — resolved absolute paths never leak into generated files.
 - [`examples/quickstart/kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/quickstart/kernels.toml)
   — the self-contained toy pair, walked through in [the quickstart](../quickstart.md).
 - [`examples/turbo-stack.kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/turbo-stack.kernels.toml)
-  — the production instance (the MOM6 ⇄ TIM case study): the five kernel
+  — the production instance (the MOM6 ⇄ TIM case study): the six kernel
   pairs, the NCAR dump directory and kernel header paths, pinned AMReX/MPI
   include dirs, and the shared `[lean]` project. On another site, copy it
   and repoint the paths — that file is the *only* thing that changes.
