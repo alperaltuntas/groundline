@@ -8,6 +8,7 @@ import Groundline.ThicknessToDz
 import Groundline.RatioMax
 import Groundline.FluxElem
 import Groundline.ContinuityConvergence
+import Groundline.BtMassFlux
 import Groundline.QuickstartEquiv
 
 set_option linter.style.header false
@@ -86,6 +87,17 @@ no `sorryAx`. The output is checked by eye in the build log.
 #print axioms Groundline.convergenceZonalInplace_kernel_equiv
 #print axioms Groundline.convergenceMeridional_kernel_equiv
 #print axioms Groundline.convergenceMeridionalInplace_kernel_equiv
+
+-- The first column kernels (docs/COLUMN_KERNELS.md): generated defs that call
+-- the banked flux_elem defs, and theorems composed through fluxElem_point_equiv.
+#print axioms Groundline.GeneratedFtn.zonal_bt_mass_flux
+#print axioms Groundline.GeneratedCpp.zonal_BT_mass_flux
+#print axioms Groundline.zonalBtMassFlux_column_equiv
+#print axioms Groundline.zonalBtMassFlux_kernel_equiv
+#print axioms Groundline.GeneratedFtn.meridional_bt_mass_flux
+#print axioms Groundline.GeneratedCpp.meridional_BT_mass_flux
+#print axioms Groundline.meridionalBtMassFlux_column_equiv
+#print axioms Groundline.meridionalBtMassFlux_kernel_equiv
 
 -- The quickstart pair (examples/quickstart/kernels.toml)
 #print axioms Quickstart.GeneratedFtn.scale_clip_acc

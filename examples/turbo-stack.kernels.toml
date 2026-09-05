@@ -141,3 +141,31 @@ pointize = true
 name = "continuity_convergence_meridional_inplace"
 fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "continuity_merdional_convergence", nest = 2 }
 pointize = true
+
+# --- Column kernels (docs/COLUMN_KERNELS.md; Tier B) -----------------------
+#
+# `columns` names the horizontal indices the kernel is pointized over; every
+# other loop index is the vertical fold index. `assume` declares the
+# hypotheses under which guarded blocks are pruned before modeling — here the
+# OBC paths, which the C++ port itself aborts on (a non-null OBC pointer);
+# `local_specified_bc` is the flag, `obc_in_row` the per-row flag array it
+# alone can set. `ignore_calls` drops the timer calls as effect-free. All of
+# it is stamped into the generated def's doc comment. The C++ side is the
+# lambda of the function's first ParallelFor, whose `int i, int j` are its
+# columns; both sides call the banked flux_elem primitive per layer.
+
+[[kernel]]
+name = "zonal_bt_mass_flux"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "zonal_bt_mass_flux" }
+cpp = { source = "mom_continuity_ppm.cpp", function = "zonal_BT_mass_flux", parallel_for = 1, columns = ["i", "j"] }
+columns = ["j", "i"]
+assume = { local_specified_bc = false, obc_in_row = false }
+ignore_calls = ["cpu_clock_begin", "cpu_clock_end"]
+
+[[kernel]]
+name = "meridional_bt_mass_flux"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "meridional_bt_mass_flux" }
+cpp = { source = "mom_continuity_ppm.cpp", function = "meridional_BT_mass_flux", parallel_for = 1, columns = ["i", "j"] }
+columns = ["j", "i"]
+assume = { local_specified_bc = false, obc_in_row = false }
+ignore_calls = ["cpu_clock_begin", "cpu_clock_end"]

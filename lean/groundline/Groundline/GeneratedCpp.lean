@@ -93,6 +93,26 @@ Result `continuity_convergence_point` — the function result, modeled functiona
 def continuity_convergence_point (h_prev flux_out flux_in dt IareaT h_min : ℝ) : ℝ :=
   max (h_prev - dt * IareaT * (flux_out - flux_in)) (h_min)
 
+/-- Generated from ParallelFor lambda 1 of `zonal_BT_mass_flux` in `submodules/infra/TIM/mom/cpp/mom_continuity_ppm.cpp` (clang JSON AST), as a column kernel over (i, j); specialized under the hypothesis `local_specified_bc = false`, `obc_in_row = false` (guarded blocks pruned).
+Outputs `(uhbt)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def zonal_BT_mass_flux {κ : Type*} (ks : List κ) (u h_in h_W h_E : κ → ℝ) (uhbt dt dy_Cu IareaT IdxT : ℝ) (por_face_areaU h_in_ip1 h_W_ip1 h_E_ip1 : κ → ℝ) (IareaT_ip1 IdxT_ip1 : ℝ) (vol_CFL : Bool) : ℝ :=
+  let uhbt_val := 0
+  let uhbt_val := ks.foldl (fun uhbt_val k =>
+      let uh_val := (flux_elem_point (u k) (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 1 dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).1
+      let duhdu_val := (flux_elem_point (u k) (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 1 dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).2
+      uhbt_val + uh_val) uhbt_val
+  uhbt_val
+
+/-- Generated from ParallelFor lambda 1 of `meridional_BT_mass_flux` in `submodules/infra/TIM/mom/cpp/mom_continuity_ppm.cpp` (clang JSON AST), as a column kernel over (i, j); specialized under the hypothesis `local_specified_bc = false`, `obc_in_row = false` (guarded blocks pruned).
+Outputs `(vhbt)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def meridional_BT_mass_flux {κ : Type*} (ks : List κ) (v h_in h_S h_N : κ → ℝ) (vhbt dt dx_Cv IareaT IdyT : ℝ) (por_face_areaV h_in_jp1 h_S_jp1 h_N_jp1 : κ → ℝ) (IareaT_jp1 IdyT_jp1 : ℝ) (vol_CFL : Bool) : ℝ :=
+  let vhbt_val := 0
+  let vhbt_val := ks.foldl (fun vhbt_val k =>
+      let vh_val := (flux_elem_point (v k) (h_in k) (h_in_jp1 k) (h_S k) (h_S_jp1 k) (h_N k) (h_N_jp1 k) 0 0 1 dx_Cv IareaT IareaT_jp1 IdyT IdyT_jp1 dt vol_CFL (por_face_areaV k)).1
+      let dvhdv_val := (flux_elem_point (v k) (h_in k) (h_in_jp1 k) (h_S k) (h_S_jp1 k) (h_N k) (h_N_jp1 k) 0 0 1 dx_Cv IareaT IareaT_jp1 IdyT IdyT_jp1 dt vol_CFL (por_face_areaV k)).2
+      vhbt_val + vh_val) vhbt_val
+  vhbt_val
+
 end
 
 end Groundline.GeneratedCpp

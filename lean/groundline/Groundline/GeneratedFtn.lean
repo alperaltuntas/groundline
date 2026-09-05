@@ -101,6 +101,22 @@ Outputs `(h)` — the `intent(inout)` arguments, modeled functionally over ℝ. 
 def continuity_convergence_meridional_inplace (h vh dt iareat vh_jm1 h_min : ℝ) : ℝ :=
   max (h - dt * iareat * (vh - vh_jm1)) (h_min)
 
+/-- Generated from `zonal_bt_mass_flux` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump), as a column kernel over (j, i); specialized under the hypothesis `local_specified_bc = false`, `obc_in_row = false` (guarded blocks pruned); calls to `cpu_clock_begin`, `cpu_clock_end` dropped as declared effect-free.
+Outputs `(uhbt)` — the `intent(out)` arguments, modeled functionally over ℝ. -/
+def zonal_bt_mass_flux {κ : Type*} (ks : List κ) (u h_in h_w h_e : κ → ℝ) (uhbt dt : ℝ) (por_face_areau h_in_ip1 h_w_ip1 h_e_ip1 : κ → ℝ) (dy_cu iareat iareat_ip1 idxt idxt_ip1 : ℝ) (vol_cfl : Bool) : ℝ :=
+  let uh := fun k => (flux_elem (u k) (h_in k) (h_in_ip1 k) (h_w k) (h_w_ip1 k) (h_e k) (h_e_ip1 k) 0 0 1 dy_cu iareat iareat_ip1 idxt idxt_ip1 dt vol_cfl (por_face_areau k)).1
+  let duhdu := fun k => (flux_elem (u k) (h_in k) (h_in_ip1 k) (h_w k) (h_w_ip1 k) (h_e k) (h_e_ip1 k) 0 0 1 dy_cu iareat iareat_ip1 idxt idxt_ip1 dt vol_cfl (por_face_areau k)).2
+  let uhbt := ks.foldl (fun uhbt k => uhbt + uh k) 0
+  uhbt
+
+/-- Generated from `meridional_bt_mass_flux` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump), as a column kernel over (j, i); specialized under the hypothesis `local_specified_bc = false`, `obc_in_row = false` (guarded blocks pruned); calls to `cpu_clock_begin`, `cpu_clock_end` dropped as declared effect-free.
+Outputs `(vhbt)` — the `intent(out)` arguments, modeled functionally over ℝ. -/
+def meridional_bt_mass_flux {κ : Type*} (ks : List κ) (v h_in h_s h_n : κ → ℝ) (vhbt dt : ℝ) (por_face_areav h_in_jp1 h_s_jp1 h_n_jp1 : κ → ℝ) (dx_cv iareat iareat_jp1 idyt idyt_jp1 : ℝ) (vol_cfl : Bool) : ℝ :=
+  let vh := fun k => (flux_elem (v k) (h_in k) (h_in_jp1 k) (h_s k) (h_s_jp1 k) (h_n k) (h_n_jp1 k) 0 0 1 dx_cv iareat iareat_jp1 idyt idyt_jp1 dt vol_cfl (por_face_areav k)).1
+  let dvhdv := fun k => (flux_elem (v k) (h_in k) (h_in_jp1 k) (h_s k) (h_s_jp1 k) (h_n k) (h_n_jp1 k) 0 0 1 dx_cv iareat iareat_jp1 idyt idyt_jp1 dt vol_cfl (por_face_areav k)).2
+  let vhbt := ks.foldl (fun vhbt k => vhbt + vh k) 0
+  vhbt
+
 end
 
 end Groundline.GeneratedFtn

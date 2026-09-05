@@ -19,7 +19,8 @@ Kernel pairs (TIM PR 36, the continuity mass-flux port):
             TIM/mom/cpp/mom_continuity_ppm_kernel.hpp — one primitive; its four
             call sites in `mom_continuity_ppm.cpp` do the stencil and pass
             scalars, e.g.
-            `h(i,j,k) = continuity_convergence_point(hin(i,j,k), uh(i,j,k), uh(i-1,j,k), dt, IareaT(i,j,0), h_min)`.
+            `h(i,j,k) = continuity_convergence_point(hin(i,j,k), uh(i,j,k),
+                                                    uh(i-1,j,k), dt, IareaT(i,j,0), h_min)`.
 
 Three extraction rules meet here for the first time (DEVLOG 2026-09-05): the
 neighbor read `uh(I-1,j,k)` of an array the nest never writes becomes the
