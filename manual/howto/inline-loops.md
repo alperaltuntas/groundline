@@ -40,12 +40,13 @@ pairing. Choose the name to match the C++ point function it pairs with.
 
 The enclosing subroutine's specification part supplies the declarations, and
 big production routines declare far more than any one loop uses — `character`
-message buffers, `optional` and `pointer` dummies, `logical` locals, all
-outside the kernel subset. A declaration outside the subset **poisons only its
-own names**: extraction refuses if and only if the addressed nest actually
-*references* a poisoned name (the refusal names both the variable and why its
-declaration was rejected). The loop you want is not held hostage by the
-routine around it.
+message buffers, `pointer` dummies, `logical` locals, all outside the kernel
+subset (an `optional` dummy the nest reads is fine: presence is the caller's
+precondition, and the guard that tests it sits outside the nest). A
+declaration outside the subset **poisons only its own names**: extraction
+refuses if and only if the addressed nest actually *references* a poisoned
+name (the refusal names both the variable and why its declaration was
+rejected). The loop you want is not held hostage by the routine around it.
 
 ## Worked example
 

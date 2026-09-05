@@ -88,8 +88,11 @@ parameters** of the point function:
   Loop-invariance is guaranteed, not assumed: the base must be an
   `intent(in)` derived-type dummy argument, which Fortran forbids modifying,
   and component *writes* refuse;
-- a **component array indexed exactly by the loop indices** —
-  `tv%SpV_avg(i,j,k)` → parameter `spv_avg`, fed per cell.
+- a **component array indexed by loop indices** — all of them
+  (`tv%SpV_avg(i,j,k)` → parameter `spv_avg`, fed per cell) or, since
+  2026-09-05, a *subset* of them (`G%IareaT(i,j)` in a `k, j, i` nest →
+  `iareat`): along the omitted indices the value is the same for every
+  iteration, and it is read-only for the same reason the scalar is.
 
 Naming is deterministic — the component's own name — and collision-checked:
 if it collides with a parameter, local, loop index, or another synthesized
@@ -98,6 +101,37 @@ the by-eye audit of generated Lean against source). Synthesized parameters are
 modeled as real scalars; the one-time audit of each generated def against its
 source covers the component's actual type. Everything else — offset
 subscripts, non-`intent(in)` bases, chained `a%b%c` — refuses.
+
+## Read-only stencils (rule C)
+
+A stencil reads a neighbor: `uh(I-1,j,k)` next to `uh(I,j,k)`. Whether that
+breaks point-locality depends on one thing — whether the nest ever *writes*
+`uh`. If it does, iteration `I` reads what iteration `I-1` wrote: a
+recurrence, refused in either loop form (the write set of the nest is
+computed first). If it does not, the value read is loop-entry data, exactly
+like the cell's own inputs, and the iteration still depends only on loop-entry
+data. Pointize then admits the read and synthesizes an input per offset
+pattern, named after the array and the offsets index by index:
+`uh(I-1,j,k)` → `uh_im1`, `a(i+1,j-1,k)` → `a_ip1_jm1`. The offset is
+absorbed into *which input* — it never becomes integer arithmetic inside the
+ℝ model. Only `index ± literal` subscripts are admitted; writes must still
+land in the iteration's own cell.
+
+The license, granted 2026-09-05, is deliberately narrow: stencils are
+admitted in **`do concurrent` nests only**. The source's independence
+assertion covers them there. A plain DO with a stencil refuses until the
+schema-lemma variant for it is proved — though the existing lemma's form,
+which threads read-only arrays through the point function's closure rather
+than through the mutable state, appears to cover the read-only case already.
+That is a decision for when a kernel needs it.
+
+## Nest-invariant locals (rule D)
+
+A scalar local the nest reads but never assigns — `h_min`, set before the
+loop from an optional argument — is loop-entry data too: an input of the
+point function, synthesized under its own name and declared type. A local
+the nest *does* assign stays a per-iteration `let`, as before. How the caller
+set the value is outside the kernel, like any scalar argument.
 
 ## One gap, closed by the checker
 

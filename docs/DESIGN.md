@@ -387,6 +387,20 @@ frontier-and-gate story real).
   before assignment now refuses in Python rather than in Lean. Point lemma:
   `simp only [defs, neg_mul]` — the only delta is the documented unary-minus
   parse asymmetry.
+  **The convergence update banked 2026-09-05 (later still) — Tier A
+  complete:** all four Fortran nests of `continuity_{zonal,merdional}_convergence`
+  against the one C++ primitive `continuity_convergence_point`, via three
+  extraction rules: **rule C, read-only stencils** (`uh(I-1,j,k)` → input
+  `uh_im1`; licensed narrowly — arrays the nest never writes, `do concurrent`
+  nests only; a write to a neighbor cell or a read of a written array's
+  neighbor refuses as a recurrence, which is where the committed recurrence
+  fixture now refuses), **rule B widened** (component arrays indexed by a
+  subset of the loop indices), **rule D** (nest-invariant locals as inputs);
+  plus `optional` dummies, and on the C++ side `amrex::max`/`min` with the
+  `NoOp` cast and temporary-materialization wrappers their `const T&`
+  signature produces. Four `rfl` point lemmas; kernel-level lifts with the
+  stencil as an explicit neighbor map. Every primitive of TIM PR 36 now
+  carries a theorem; the column kernels (Tier B) are next.
 - *Later:* kernels with cross-iteration structure (k-recurrences → induction —
   the genuinely sequential shapes the plain-DO gate refuses, e.g.
   `find_dz_for_eta`'s pressure accumulation), reductions (scalar

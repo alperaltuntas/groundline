@@ -39,29 +39,29 @@ What a future step would need:
   and it was deliberately **reserved** rather than hand-waved when plain DO
   was admitted.
 
-## Neighbor reads: read-only stencils
+## Neighbor reads: read-only stencils — landed in `do concurrent`, open in plain DO
 
-A stencil like `b(i) = a(i-1) + a(i+1)` refuses today at the array-index gate
-(every reference must sit exactly at the loop indices). But when the offset
-reads are of arrays **never written in the loop**, this is a much cheaper
-extension than the recurrences above — the iterations still don't interact:
+A stencil like `b(i) = a(i-1) + a(i+1)` on an array **never written in the
+loop** is admitted since 2026-09-05 in `do concurrent` nests
+([rule C](concepts/pointize.md#read-only-stencils-rule-c)): each offset
+pattern becomes a synthesized input (`a(i-1)` → `a_im1`), writes still land
+in the iteration's own cell, and the source's independence assertion is the
+license. What remains open:
 
-- **extraction** — admit subscripts of the form *loop index ± integer
-  literal* on read-only arrays; each distinct offset pattern becomes a
-  synthesized scalar input (`a(i-1)` → `a_m1`), the same move rule B already
-  makes for component arrays. Writes must still land in the iteration's own
-  cell. The offset is absorbed into *which input* — it never becomes integer
-  arithmetic inside the ℝ model;
-- **licenses** — `do concurrent`'s assertion carries over unchanged; the
-  plain-DO schema lemma needs a variant that threads the read-only arrays as
-  a fixed environment instead of mutable cell state — a strictly easier
-  frame argument than the one already proved;
-- **the C++ side** — the ports read `a(i-1,j,k)` off an `Array4` inside a
-  point function, so the clang frontend needs the mirror admission, mapping
-  the same literal-offset reads to the same synthesized inputs.
+- **plain DO** — refused until the schema-lemma variant for read-only
+  environments is proved. The existing lemma threads read-only arrays through
+  the point function's closure rather than the mutable state, so it appears
+  to cover the case already; admitting it is a semantics decision for when a
+  kernel needs it;
+- **the C++ side** — the ports so far do the stencil at the call site and
+  pass scalars into the point function, so nothing was needed. A port that
+  reads `a(i-1,j,k)` off an `Array4` *inside* a point function would need the
+  clang frontend's mirror admission (part of the C++ loop-extraction item
+  below).
 
 Distinct from a k-recurrence, where the offset read is of the array being
-*written* — that one genuinely sequentializes and lives in the section above.
+*written* — that one genuinely sequentializes and lives in the section above;
+it refuses in either loop form.
 
 ## Integer values in kernel bodies
 

@@ -87,8 +87,10 @@ that boundary implicit, it is pinned as a refusal fixture
 (`tests/f90/test_kernel_recurrence`), distilled to the shape above — with the
 capital-`K` spelling kept deliberately: the dump lowercases names, `K` and
 `k` are the same index, so the test proves the refusal fires on the `+1`
-*offset*, not on a spurious case mismatch. The real refusal, from the real
-pipeline:
+*offset*, not on a spurious case mismatch. (Since read-only stencils were
+admitted, the gate that fires is the *write* to the neighbor cell `K+1` —
+reads at an offset are fine when the array is never written in the nest;
+here it is.) The real refusal, from the real pipeline:
 
 ```console
 $ groundline kernel show accumulate --kernels /tmp/demo/kernels.toml

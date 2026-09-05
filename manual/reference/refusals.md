@@ -8,7 +8,7 @@ these sites fails loudly instead of producing a plausible-but-wrong model
 
 The catalog is complete as of this manual's writing — it was compiled by
 `grep -n "raise UnsupportedConstruct"` over the four trusted-base modules
-(97 sites), and each entry's message text is greppable in the source. Related
+(100 sites), and each entry's message text is greppable in the source. Related
 but distinct: a malformed *manifest* raises `ManifestError`
 ([manifest rules](manifest.md#general-rules)), and clang/file-system failures
 raise ordinary errors — neither is a subset refusal.
@@ -47,7 +47,7 @@ implies — the early-warning surface for dump-format drift (see
 | an unrecognized `IfConstruct` child (`IfConstruct child '<node>'`) | if/elseif/else blocks only — no construct names, no other clauses |
 | `do concurrent` with a stride / plain `do` with a stride | a strided box is not the full index box the iteration schemas model |
 | an unsupported intrinsic type (`intrinsic type '<type>'`) or type spec (`type spec '<node>'`) | only `real`, `integer`, `logical`, and (as dummies) derived types are declared into kernels; a logical dummy is a `Bool` input (a bare IF guard), while logical locals and outputs refuse at print |
-| an unsupported declaration attribute (`attribute '<node>'`; whole-subroutine mode) | `intent` and `dimension` are understood; `optional`, `pointer`, etc. change semantics the model doesn't carry |
+| an unsupported declaration attribute (`attribute '<node>'`) | `intent`, `dimension` and `optional` are understood (presence is the caller's precondition — a body that could branch on it, via `present()`, refuses anyway); `pointer`, `allocatable`, etc. change semantics the model doesn't carry |
 | a dummy argument with no declaration (`undeclared dummy args`) | a parameter of unknown type/intent cannot be modeled |
 
 ### Inline-loop addressing (rule B; `extract_loop_kernel`)
@@ -89,11 +89,11 @@ implies — the early-warning surface for dump-format drift (see
 
 | Trigger | Why it refuses |
 |---|---|
-| **an implicit cast not on the allowlist** (`implicit cast kind '<kind>' is not on the value-preserving allowlist`) — only `LValueToRValue` and `FunctionToPointerDecay` pass | the load-bearing refusal: cast kinds like `IntegralToFloating` *change the value*; unwrapping them wholesale is exactly how a plausible-but-wrong model would slip in |
+| **an implicit cast not on the allowlist** (`implicit cast kind '<kind>' is not on the value-preserving allowlist`) — only `LValueToRValue`, `FunctionToPointerDecay` and `NoOp` (a qualifier-only conversion, `Real` → `const Real` when a prvalue binds to a `const Real &`) pass | the load-bearing refusal: cast kinds like `IntegralToFloating` *change the value*; unwrapping them wholesale is exactly how a plausible-but-wrong model would slip in |
 | a reference to anything but a parameter or local (`only parameters and locals are supported in expressions`) | globals, members, and enumerators are outside the model |
 | unary operators other than prefix `-` | only negation is modeled |
 | binary opcodes outside `+ - * /` and the six comparisons (so `%`, `&&`, bit-ops, …) | unmodeled arithmetic |
-| calls to anything whose referenced declaration is not `abs`, calls with no callee or a non-`DeclRefExpr` callee, `abs` with ≠ 1 argument | same intrinsic policy as Fortran |
+| calls to anything whose referenced declaration is not `abs`, `max` or `min`; calls with no callee or a non-`DeclRefExpr` callee; a wrong arity (`abs` with ≠ 1 argument, AMReX's three-argument `max`/`min`) | same intrinsic policy as Fortran; the binary `amrex::max`/`amrex::min` are the forms the kernels use |
 | user-defined literal with an unexpected shape, a suffix other than `_rt`, or a non-`FloatingLiteral` operand | only AMReX's `_rt` real literals are modeled |
 | any other expression node (`expression node '<kind>'`) | catch-all |
 
@@ -111,11 +111,14 @@ implies — the early-warning surface for dump-format drift (see
 | the body is not exactly one do-concurrent or plain-do nest | pointize models one loop nest; prologue/epilogue statements would be silently attributed to every iteration |
 | duplicate loop index in a plain-do nest | the schema lemma requires a duplicate-free enumeration |
 | a do-construct inside the loop body | the nest is not perfectly nested — the pointwise model has no place for an inner loop |
-| an array reference not indexed exactly by the loop indices (offsets like `p(i,K+1)`, partial indexing, non-variable subscripts) | not point-local: reads another iteration's cell — the k-recurrence boundary ([case study](../case-studies/edge-thickness-upwind.md#the-boundary-marked-with-a-refusal-fixture)) |
+| an array reference whose subscripts are not the loop indices, plainly or with a literal offset (`not indexed by the loop indices`: partial indexing of a plain array, `1+i` spellings, non-variable subscripts) | not point-local, or not a shape the model names |
+| a write to a neighbor cell (`p(i,K+1) = …`; `every write must land in the iteration's own cell`) | the k-recurrence boundary: iteration `k` writes what iteration `k+1` reads ([case study](../case-studies/edge-thickness-upwind.md#the-boundary-marked-with-a-refusal-fixture)) |
+| a neighbor read of an array the nest writes (`cross-iteration recurrence`) | the other face of the same boundary, refused in either loop form |
+| a neighbor read in a plain-do nest (`do concurrent nests only`) | [rule C](../concepts/pointize.md#read-only-stencils-rule-c)'s license is that narrow: the plain-DO schema-lemma variant is not yet proved |
 | assignment to a scalar parameter inside a plain-do nest | the accumulator/reduction shape (`s = s + a(i)`): every write must land in the iteration's own cell for the schema lemma's setting to apply |
 | assignment to a derived-type component | component *writes* would break rule B's loop-invariance guarantee |
 | component read whose base is not an `intent(in)` derived-type dummy | `intent(in)` is what *guarantees* loop-invariance rather than assumes it |
-| component read neither a loop-invariant scalar nor an array at exactly the loop indices (e.g. offset subscripts) | outside the two licensed shapes of rule B |
+| component read neither a loop-invariant scalar nor an array indexed by (a subset of) the loop indices (e.g. offset subscripts) | outside the licensed shapes of rule B |
 | a synthesized parameter name colliding with an existing name | refuse-don't-rename: a renamed parameter would defeat the by-eye audit of generated Lean against source |
 | unsupported assignment targets, unscalarizable expression nodes, non-assignment/If statements in the loop body | catch-alls closing the pass |
 

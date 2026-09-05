@@ -91,6 +91,10 @@ locals and outputs refuse at print. In whole-procedure mode a derived-type
 dummy the body never references (the `G`, `GV`, `US` structs passed along by
 convention) is dropped, as pointize drops unused parameters in loop mode.
 
+**Declaration attributes.** `intent` and `dimension` are read; `optional`
+is read past — presence is the caller's precondition, and a body that could
+branch on it (a `present()` call) refuses anyway. Anything else refuses.
+
 **Notable refusal boundaries** (complete list in [the catalog](refusals.md)):
 non-intrinsic calls, strides in loop control, literal kinds beyond real/int,
 chained `a%b%c` component paths, a local read before assignment.
@@ -119,8 +123,13 @@ each argued value-preserving:
 - `FunctionToPointerDecay` — a function name decaying to a pointer in callee
   position; no data value involved.
 
-Anything else refuses — pinned by a fixture where `b + 1` produces an
-`IntegralToFloating` cast and must raise.
+A third kind, `NoOp`, joined the allowlist when `amrex::max` was admitted:
+it changes nothing but qualifiers (`Real` → `const Real` as a prvalue binds
+to a `const Real &` parameter). Two single-child wrapper nodes the same
+signature produces — `ExprWithCleanups` around a full-expression with
+temporaries, and `MaterializeTemporaryExpr` for the temporary itself — are
+unwrapped transparently. Anything else refuses — pinned by a fixture where
+`b + 1` produces an `IntegralToFloating` cast and must raise.
 
 **Intent mapping.** A non-const lvalue reference (`Real &` / `double &`) →
 `inout`; a const by-value scalar (`const Real` / `const double`) → `in`; a
@@ -154,10 +163,14 @@ scalar functions, so extraction emits a rank-0 `Kernel` directly;
 `functionalize` and the printer are reused unchanged — the control-flow join
 machinery is frontend-agnostic.
 
+**Callees.** `amrex::Math::abs` (one argument) and the binary
+`amrex::max` / `amrex::min`; AMReX's three-argument overloads refuse until a
+kernel needs them.
+
 **Format notes worth knowing** (from the original survey, all pinned):
 `amrex::Math::abs`'s callee carries no namespace qualifier in the JSON
 (acceptance is on the referenced declaration's name, found through amrex's
-`using std::abs`); `FloatingLiteral.value` is the shortest round-trip form
+`using std::abs`; `amrex::max` likewise surfaces as the FunctionDecl `max`); `FloatingLiteral.value` is the shortest round-trip form
 (`3.0_rt` → `'3'`), which lands on the same Lean numerals as the Fortran
 side; `else if` arrives as an `IfStmt` in the else slot and is kept nested,
 which functionalize turns into the same if-expression chain as flang's

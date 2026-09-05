@@ -14,6 +14,120 @@
 
 ---
 
+## 2026-09-05 (later still) — Tier A item 3: the convergence update banked — read-only stencils, subset-indexed components, nest-invariant locals
+
+**The kernels.** `continuity_zonal_convergence` and
+`continuity_merdional_convergence` (the source's spelling) each hold two
+`do concurrent (k,j,i)` nests — the `present(hin)` branch and the in-place
+branch the source marks "untested" — all four of the shape
+`h(i,j,k) = max(h_prev - dt*G%IareaT(i,j)*(flux(i,j,k) - flux(i-1,j,k)), h_min)`.
+The port has **one** primitive, `continuity_convergence_point`, whose four
+call sites do the stencil and pass scalars
+(`continuity_convergence_point(hin(i,j,k), uh(i,j,k), uh(i-1,j,k), dt,
+IareaT(i,j,0), h_min)`). So the natural unit here is not one pair but four
+Fortran nests against one C++ def: the manifest carries the C++ side on the
+first entry only (a def is emitted per entry, and Lean would reject a
+duplicate), and `Groundline/ContinuityConvergence.lean` relates each Fortran
+def to it. Tier A is complete with this: every primitive of PR 36 carries a
+theorem.
+
+**Step 0 — the refusals**, peeled in turn: `references 'hin' — attribute
+'Optional'`; `array reference uh('i-1'?, …) not indexed exactly by the loop
+indices`; `component read g%iareat(i, j) … indexed exactly by the loop
+indices ('k', 'j', 'i')`; `h_min` surviving as a local never bound (the
+read-before-assign gate); on the C++ side `kernel must return void` (already
+done), then `call to 'max'`, then the cast `NoOp` and the node kinds
+`ExprWithCleanups` / `MaterializeTemporaryExpr` that `amrex::max`'s
+`const T&` signature produces.
+
+**Rule C — read-only stencils** (`kir.pointize`). The user licensed the
+narrow form: a literal-offset read (`index ± literal` only; `1+i` refuses as
+a different spelling) of an array **the nest never writes**, in **`do
+concurrent` nests only**. The write set of the nest is computed first; an
+offset read of a written array refuses as a cross-iteration recurrence in
+either loop form, and so does a write to a neighbor cell — which is where
+the committed recurrence fixture (`p(i,K+1) = p(i,K) + …`) now refuses,
+with a message that says so (`every write must land in the iteration's own
+cell`) rather than at the old blanket index gate. Each offset pattern becomes
+a synthesized input named after the array and the offsets index by index
+(`uh(I-1,j,k)` → `uh_im1`; `a(i+1,j-1,k)` → `a_ip1_jm1`) — dimension-aware,
+so `a(i-1,j)` and `a(i,j-1)` cannot collide — and collision-checked against
+everything else. On soundness: the value read is loop-entry data, so the
+iteration still depends only on loop-entry data; the source's independence
+assertion is the license. Noted for the record: the plain-DO case appears to
+be covered by the existing schema lemma already, since `foldSeq`'s point
+function takes the read-only arrays through its closure (that is how
+`thickness_to_dz`'s `h i` and `spv i` are threaded today) and never through
+the mutable state — but admitting it is a semantics decision, so it refuses
+(`do concurrent nests only`) until asked for.
+
+**Rule B, widened — subset-indexed component arrays.** `G%IareaT(i,j)` in a
+`k,j,i` nest becomes the per-cell input `iareat`. Sound because the base is
+an `intent(in)` derived-type dummy: the value at `(i,j)` is the same for
+every `k`, and it is read-only for the same reason the scalar components are.
+The generated def quantifies over any value of the input, which includes the
+actual one. A *plain* array indexed by a subset (`dt2d(i,j)`) still refuses —
+not needed, not licensed.
+
+**Rule D — nest-invariant locals.** `h_min` is set before the loop
+(`h_min = 0.0 ; if (present(hmin)) h_min = hmin`) and only read inside it.
+A scalar local the nest never assigns is loop-entry data: it becomes a
+synthesized input under its own name and declared type; a local the nest
+assigns stays a per-iteration `let` (pinned by `local_written`). How the
+caller set it is outside the kernel, like a scalar argument — the same
+boundary as every inline-addressed nest.
+
+**`optional`.** Admitted as a declaration attribute in both modes: presence
+is the caller's precondition, the body is modeled as a function of the
+dummy's value whenever it runs, and a body that could branch on presence —
+a `present()` call — refuses anyway. Here the presence guard is the `if` the
+addressed nest sits under.
+
+**C++ side.** `amrex::max` / `amrex::min` join `abs` in the callee table, in
+their binary form (AMReX's three-argument overloads refuse, pinned). Their
+`const T& f(const T&, const T&)` signature drags in three JSON shapes: a
+`NoOp` implicit cast (`Real` → `const Real` as a prvalue binds to the
+reference — qualifier-only, value untouched by definition; added to the
+allowlist with that justification), `MaterializeTemporaryExpr` for the
+temporary, and `ExprWithCleanups` around the full-expression. The two wrapper
+kinds are unwrapped transparently (single child). The second argument
+`h_min`, an lvalue, binds directly with no cast at all.
+
+Considered and ruled out: naming stencil inputs `uh_m1` without the index
+(the limits page's sketch) — ambiguous across dimensions; admitting stencils
+in plain DO on the closure argument above without asking; admitting
+subset-indexed *plain* arrays (no kernel needs it); the three-argument
+`max`.
+
+Dump-shape notes (Q1 ledger): the offset subscript is
+`SectionSubscript -> Integer -> Expr` over `Subtract(Expr i, Expr 1_4)` with
+the literal as `IntLiteralConstant = '1'` — the with-sema unparse text
+`int(i-1_4,kind=8)` shows the kind conversion the tree does not carry;
+`optional` is a bare `AttrSpec -> Optional`; the subset-indexed component is
+the usual `ArrayElement` over `StructureComponent` with two subscripts.
+clang: see the C++ paragraph; `amrex::max` resolves to a `FunctionDecl`
+named `max` of type `const double &(const double &, const double &) noexcept`.
+
+Fixtures: `tests/f90/test_kernel_stencil` (`converge` — nest 1 under its
+presence guard, with the stencil, the subset component, the invariant local
+and two optional dummies; `local_written`; refusal siblings
+`stencil_plain_do`, `stencil_written`, `subset_plain_array`) and
+`tests/cpp/test_kernel_minmax.cpp` (an AMReX-shaped prelude so the same
+casts appear; `converge_point`, `clamp_point`, `refuse_max_three`,
+`refuse_pow`). Hand-built tests pin the `1+i` spelling, the stencil-name
+collision and the neighbor write; the old `test_offset_subscript_refused`
+became `test_offset_read_in_do_concurrent_is_a_stencil_input`, and the
+recurrence fixture's expected message moved to the own-cell write gate. The
+manual's recurrence-refusal snippet was regenerated accordingly.
+
+Proof: `Groundline/ContinuityConvergence.lean` — four point lemmas, all
+`rfl` (the bodies are the same expression modulo argument order), and four
+kernel-level lifts in which the stencil is an explicit neighbor map on the
+index type (`west`, `south`), so the C++ call site's `uh(i-1,j,k)` is
+`uh (west i)`. The argument correspondence is read off the call site; a
+wrong pairing would fail to prove (`uh - uh_im1` is not `uh_im1 - uh`).
+Retroactive check: no previously generated def changed.
+
 ## 2026-09-05 (later) — Tier A item 2: `flux_elem` banked — the generalized join, Bool inputs, mutable C++ locals
 
 **The kernel.** `flux_elem` is the PPM face flux: for one candidate face
