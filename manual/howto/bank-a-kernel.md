@@ -75,7 +75,10 @@ hand-written models — relate the two *generated* defs directly; use
   When the bodies come out identical this is literally `:= rfl`; when shapes
   differ, `unfold`/`simp only` plus `ring`-provable bridge identities, or
   `split_ifs <;> rfl` for control-flow representation deltas, have covered
-  every banked kernel so far.
+  every banked kernel so far. If the proof needs anything beyond `rfl` and
+  a control-flow split, add the identity it uses to the
+  [float-readiness ledger](../limits.md#floating-point-a-readiness-ledger) —
+  each such step is a place a floating-point model would have to re-examine.
 - **Kernel-level theorem** — lift to whole arrays with the license matching
   the loop form: a `do concurrent` kernel reuses the `pointwise` schema (the
   source's independence assertion is the license); a plain-DO kernel models

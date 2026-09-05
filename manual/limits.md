@@ -114,6 +114,68 @@ be compared against a C++ point function (under the explicit
 the same way would allow loop-vs-loop comparisons — a natural next step,
 not started.
 
+## Floating point: a readiness ledger
+
+Equivalence is over ℝ by design (next section), and this page does not
+propose changing that. But if a floating-point model is ever wanted, the
+question worth answering *now* is whether the places where ℝ enters would be
+hard to find later. They would not, because the design concentrates them —
+and this ledger names them, to be maintained as kernels are banked rather than
+reconstructed afterwards.
+
+**What is already float-ready.** The generated defs mirror the source's own
+operation order — parentheses kept, nothing reassociated or simplified,
+inlined locals textual copies of deterministic expressions. That is exactly
+the structure a floating-point model needs; a float carrier would reuse the
+same generated defs behind a different binder type.
+
+**Where ℝ enters:**
+
+- *The printer's tables* (`lean_printer.py`): the carrier type (`_LEAN_TYPE`),
+  the operator spellings (`_BIN`, `_CMP`), the literal normalization
+  (`_real_lit`), the intrinsic spellings (`abs`, `min`, `max`). Swapping the
+  carrier touches these and nothing in the frontends or passes.
+- *Every non-`rfl` proof step.* A `rfl` point lemma says the two sides are the
+  same expression, hence the same float computation modulo the compiler.
+  Every other tactic marks an algebraic identity the ℝ proof leaned on — a
+  float question to re-examine. The inventory today (grep the proof files):
+    - `PpmLimitPos.lean`: `c*c + 3*(d*d) = c^2 + 3*d^2` by `ring` — the
+      `**2` versus `x*x` spelling. IEEE-exact provided the compiler lowers a
+      constant integer power 2 to a multiply (flang does).
+    - `PpmLimitCw84.lean`, `FidelityCpp.lean`: `split_ifs <;> rfl` —
+      control-flow *representation* only (merged `Cond`s versus sequential
+      `let`s); no arithmetic identity, float-exact.
+    - `FluxElem.lean`: `neg_mul` — `(-u) * dt = -(u * dt)`. IEEE-exact:
+      negation is exact and rounding is sign-symmetric.
+    - `ThicknessToDz.lean`: `foldSeq_eq_pointwiseMap` — an iteration-order
+      lemma, arithmetic-agnostic (each cell is computed once from loop-entry
+      data), float-exact.
+- *Lean's ℝ conventions.* `x / 0 = 0` in Lean; IEEE gives ±∞ or NaN. Every
+  `/` in a generated def is a site a float model must speak about. Today:
+  `ppm_limit_pos`'s `scale` (guarded — `curv > 0` makes the denominator
+  positive) and `ratio_max`'s `a / b` (reachable with `b = 0` when `a = 0`,
+  where the source yields NaN and the ℝ model yields 0 — the theorem still
+  holds because both sides compute the same expression, but a float
+  *specification* of `ratio_max` would have to say so).
+- *Comparisons and guards.* Over ℝ every comparison is total; in float, NaN
+  makes them all false. The `Cmp` table is the one place that changes; the
+  `min`/`max` intrinsics carry their own NaN and tie conventions, which
+  differ between Fortran and `amrex::max`.
+
+**What the parse trees do not pin, and a float model would have to:**
+
+- *Real kinds* are read and dropped when a parameter becomes `real`
+  (`flang_kernel._parse_type_decl`; `clang_kernel._extract_param`, where
+  `Real` and `double` both map to `real`). One line on each side to keep
+  them.
+- *Compiler flags* are outside both trees entirely: FMA contraction,
+  reassociation, fast-math. A float model would state the assumed
+  compilation mode explicitly.
+
+None of the extensions on this page hides a float assumption: stencils,
+subset indexing, the generalized join and Bool guards are about *which values
+flow where*, and that structure is the same in either arithmetic.
+
 ## Scope boundaries that are permanent, not roadmap
 
 Worth restating, so the roadmap above isn't misread as "everything,
