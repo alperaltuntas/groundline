@@ -162,6 +162,64 @@ def capped_ratio_point (a b maxrat : ℝ) : ℝ :=
         self._refuse("refuse_void_return", "return statement in a void kernel")
 
 
+@needs_clang
+class TestJoinLocalsFixture:
+    """The flux_elem_point construct set (the C++ mirror of
+    tests/f90/test_kernel_join_locals): a `bool const` parameter as a Bool
+    input used as a bare `if` guard; locals declared WITHOUT an initializer
+    and assigned inside the branches of an if / else if / else that a
+    statement follows — merged by functionalize exactly as on the Fortran
+    side (else-if arrives nested in the else slot and merges recursively into
+    the same Cond chain). The refuse_* siblings pin the neighbors."""
+
+    source = CPP_DIR / "test_kernel_join_locals.cpp"
+
+    def test_extraction_shape(self):
+        k = extract_kernel(self.source, "face_flux_point")
+        assert [(p.name, p.type, p.intent) for p in k.params] == [
+            ("u", "real", "in"), ("h", "real", "in"), ("h_p1", "real", "in"),
+            ("q", "real", "inout"), ("dq", "real", "inout"), ("dt", "real", "in"),
+            ("vol_cfl", "logical", "in"), ("area", "real", "in")]
+        assert [p.name for p in k.locals] == ["tmp", "cfl", "w"]
+
+    def test_printed_lean_matches_the_fortran_twin_body(self):
+        expected = """\
+def face_flux_point (u h h_p1 q dq dt : ℝ) (vol_cfl : Bool) (area : ℝ) : ℝ × ℝ :=
+  let tmp := area * dt
+  let w := if u > 0 then h * (1 - (if vol_cfl then u * dt else u * area)) else if u < 0 then h_p1 * (1 - (if vol_cfl then u * dt else u * area)) else 0.5 * (h + h_p1)
+  (if u > 0 then tmp * u * (h * (1 - (if vol_cfl then u * dt else u * area))) else if u < 0 then tmp * u * (h_p1 * (1 - (if vol_cfl then u * dt else u * area))) else 0, tmp * w)
+"""
+        assert print_kernel(extract_kernel(self.source, "face_flux_point")) == expected
+
+    def test_initialized_local_is_the_fall_through_value(self):
+        expected = """\
+def rebound_local_point (u q : ℝ) : ℝ :=
+  let w := 1
+  let w := if u > 0 then u else w
+  q + w
+"""
+        assert print_kernel(extract_kernel(self.source, "rebound_local_point")) == expected
+
+    def _refuse(self, function, match, *, through_printer=False):
+        with pytest.raises(UnsupportedConstruct, match=match):
+            k = extract_kernel(self.source, function)
+            if through_printer:
+                print_kernel(k)
+
+    def test_partial_local_read_after_join_refused(self):
+        self._refuse("refuse_partial_local", "only some paths", through_printer=True)
+
+    def test_bool_local_refused(self):
+        self._refuse("refuse_bool_local", "type 'const bool'")
+
+    def test_local_read_before_assignment_refused(self):
+        self._refuse("refuse_read_unset", "read before it is assigned",
+                     through_printer=True)
+
+    def test_list_initialized_local_refused(self):
+        self._refuse("refuse_list_init", "list/direct initializer")
+
+
 # =============================================================================
 # Refusals (trusted base: refuse, never guess)
 # =============================================================================

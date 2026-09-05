@@ -435,7 +435,8 @@ def _parse_type_decl(tds: Node) -> list[Param]:
     dts = tds.child("DeclarationTypeSpec").only_child()
     if dts.name == "IntrinsicTypeSpec":
         base = dts.only_child().name
-        type_ = {"Real": "real", "IntegerTypeSpec": "integer"}.get(base)
+        type_ = {"Real": "real", "IntegerTypeSpec": "integer",
+                 "Logical": "logical"}.get(base)
         if type_ is None:
             raise UnsupportedConstruct(f"intrinsic type '{base}'")
     elif dts.name == "Type":
@@ -528,6 +529,14 @@ def _kernel_from_root(root: Node, subroutine: str) -> Kernel:
         bound.add(sig.result)
     locals_ = tuple(d for d in decls if d.name not in bound)
     body = extract_block(sub.child("ExecutionPart").child("Block"))
+    # A derived-type dummy the body never references (grid/config structs
+    # passed along by convention) is dropped, as pointize drops unused params
+    # in loop mode; a *referenced* one survives and refuses at print.
+    used: set[str] = set()
+    for stmt in body:
+        _names_in_stmt(stmt, used)
+    params = [p for p in params
+              if not (p.type.startswith("derived:") and p.name not in used)]
     return Kernel(subroutine, tuple(params), locals_, body)
 
 

@@ -274,7 +274,9 @@ def _extract_stmts(n: dict, locals_out: list[Param], *,
     if kind == "DeclStmt":
         out = []
         for vd in _inner(n):
-            out.append(_extract_vardecl(vd, locals_out))
+            init = _extract_vardecl(vd, locals_out)
+            if init is not None:
+                out.append(init)
         return out
     if kind == "BinaryOperator" and n.get("opcode") == "=":
         kids = _inner(n)
@@ -282,10 +284,12 @@ def _extract_stmts(n: dict, locals_out: list[Param], *,
             raise UnsupportedConstruct("assignment with unexpected shape")
         lhs, rhs = kids
         ref = lhs.get("referencedDecl", {}) if lhs.get("kind") == "DeclRefExpr" else {}
-        if ref.get("kind") != "ParmVarDecl":
+        is_local = (ref.get("kind") == "VarDecl"
+                    and any(l.name == ref.get("name") for l in locals_out))
+        if ref.get("kind") != "ParmVarDecl" and not is_local:
             raise UnsupportedConstruct(
-                "assignment target must be a (reference) parameter; got "
-                f"'{lhs.get('kind')}'")
+                "assignment target must be a (reference) parameter or a "
+                f"declared local; got '{lhs.get('kind')}'")
         return [Assign(Var(ref["name"]), extract_expr(rhs))]
     if kind == "IfStmt":
         return [_extract_if(n, locals_out, result=result, tail=tail)]
@@ -307,9 +311,12 @@ def _extract_stmts(n: dict, locals_out: list[Param], *,
     raise UnsupportedConstruct(f"statement '{kind}'")
 
 
-def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Stmt:
+def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Optional[Stmt]:
     """``Real const x = e;`` → record the local + return the initializing
-    Assign (feeds ``functionalize``'s Let path, exactly like a Fortran local)."""
+    Assign (feeds ``functionalize``'s Let path, exactly like a Fortran local).
+    ``Real x;`` (no initializer) → record the local only; its later
+    assignments arrive as ordinary statements, and a read before the first
+    one refuses in ``functionalize``. List/direct initialization refuses."""
     if vd.get("kind") != "VarDecl":
         raise UnsupportedConstruct(f"declaration '{vd.get('kind')}'")
     name = vd["name"]
@@ -317,15 +324,18 @@ def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Stmt:
     if qual not in _REAL_LOCAL_TYPES:
         raise UnsupportedConstruct(f"local '{name}': type '{qual}' (only real "
                                    f"scalars — Real or double — are supported)")
-    if vd.get("init") != "c":
+    init = vd.get("init")
+    if init is not None and init != "c":
         raise UnsupportedConstruct(
-            f"local '{name}' without a copy-initializer (= form) — an "
-            f"uninitialized or list/direct-initialized local is unsupported")
+            f"local '{name}' with a list/direct initializer — only the "
+            f"copy-initializer (= form) and a bare declaration are supported")
     if any(p.name == name for p in locals_out):
         raise UnsupportedConstruct(
             f"local '{name}' declared more than once (C++ block scoping does "
             f"not map to the flat Let model)")
     locals_out.append(Param(name, "real", None, 0))
+    if init is None:
+        return None
     return Assign(Var(name), extract_expr(_only(vd, f"VarDecl '{name}'")))
 
 
@@ -366,9 +376,12 @@ def _extract_param(pd: dict) -> Param:
         return Param(name, "real", "inout", 0)
     if qual in ("const Real", "const double"):
         return Param(name, "real", "in", 0)
+    if qual == "const bool":
+        return Param(name, "logical", "in", 0)     # a Bool input (a bare `if` guard)
     raise UnsupportedConstruct(
         f"parameter '{name}': type '{qual}' (supported: 'Real &'/'double &' "
-        f"→ inout, 'const Real'/'const double' → in)")
+        f"→ inout, 'const Real'/'const double' → in, 'const bool' → a "
+        f"logical in)")
 
 
 # Return types of the two admitted calling conventions (the function's

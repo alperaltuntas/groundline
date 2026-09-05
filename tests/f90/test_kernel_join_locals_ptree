@@ -1,0 +1,531 @@
+======================== Flang: parse tree dump ========================
+Program -> ProgramUnit -> Module
+| ModuleStmt -> Name = 'test_kernel_join_locals'
+| SpecificationPart
+| | ImplicitPart -> ImplicitPartStmt -> ImplicitStmt -> 
+| | DeclarationConstruct -> SpecificationConstruct -> DerivedTypeDef
+| | | DerivedTypeStmt
+| | | | Name = 'grid_t'
+| | | ComponentDefStmt -> DataComponentDefStmt
+| | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | ComponentOrFill -> ComponentDecl
+| | | | | Name = 'dx'
+| | | EndTypeStmt -> Name = 'grid_t'
+| ModuleSubprogramPart
+| | ContainsStmt
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | PrefixSpec -> Elemental
+| | | | Name = 'face_flux'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'h'
+| | | | DummyArg -> Name = 'h_p1'
+| | | | DummyArg -> Name = 'q'
+| | | | DummyArg -> Name = 'dq'
+| | | | DummyArg -> Name = 'dt'
+| | | | DummyArg -> Name = 'g'
+| | | | DummyArg -> Name = 'vol_cfl'
+| | | | DummyArg -> Name = 'area'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | | EntityDecl
+| | | | | | Name = 'h'
+| | | | | EntityDecl
+| | | | | | Name = 'h_p1'
+| | | | | EntityDecl
+| | | | | | Name = 'dt'
+| | | | | EntityDecl
+| | | | | | Name = 'area'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = Out
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | | | EntityDecl
+| | | | | | Name = 'dq'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> Type
+| | | | | | DerivedTypeSpec
+| | | | | | | Name = 'grid_t'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'g'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Logical
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'vol_cfl'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'cfl'
+| | | | | EntityDecl
+| | | | | | Name = 'w'
+| | | | | EntityDecl
+| | | | | | Name = 'tmp'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'tmp=area*dt'
+| | | | | Variable = 'tmp'
+| | | | | | Designator -> DataRef -> Name = 'tmp'
+| | | | | Expr = 'area*dt'
+| | | | | | Multiply
+| | | | | | | Expr = 'area'
+| | | | | | | | Designator -> DataRef -> Name = 'area'
+| | | | | | | Expr = 'dt'
+| | | | | | | | Designator -> DataRef -> Name = 'dt'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> IfConstruct
+| | | | | IfThenStmt
+| | | | | | Scalar -> Logical -> Expr = 'u>0._8'
+| | | | | | | GT
+| | | | | | | | Expr = 'u'
+| | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | Expr = '0._4'
+| | | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | | Real = '0.0'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> IfConstruct
+| | | | | | | IfThenStmt
+| | | | | | | | Scalar -> Logical -> Expr = 'vol_cfl'
+| | | | | | | | | Designator -> DataRef -> Name = 'vol_cfl'
+| | | | | | | Block
+| | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'cfl=u*dt'
+| | | | | | | | | Variable = 'cfl'
+| | | | | | | | | | Designator -> DataRef -> Name = 'cfl'
+| | | | | | | | | Expr = 'u*dt'
+| | | | | | | | | | Multiply
+| | | | | | | | | | | Expr = 'u'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | | | Expr = 'dt'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'dt'
+| | | | | | | ElseBlock
+| | | | | | | | ElseStmt -> 
+| | | | | | | | Block
+| | | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'cfl=u*area'
+| | | | | | | | | | Variable = 'cfl'
+| | | | | | | | | | | Designator -> DataRef -> Name = 'cfl'
+| | | | | | | | | | Expr = 'u*area'
+| | | | | | | | | | | Multiply
+| | | | | | | | | | | | Expr = 'u'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | | | | Expr = 'area'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'area'
+| | | | | | | EndIfStmt -> 
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'w=h*(1._8-cfl)'
+| | | | | | | Variable = 'w'
+| | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | | | Expr = 'h*(1._8-cfl)'
+| | | | | | | | Multiply
+| | | | | | | | | Expr = 'h'
+| | | | | | | | | | Designator -> DataRef -> Name = 'h'
+| | | | | | | | | Expr = '(1._8-cfl)'
+| | | | | | | | | | Parentheses -> Expr = '1._8-cfl'
+| | | | | | | | | | | Subtract
+| | | | | | | | | | | | Expr = '1._4'
+| | | | | | | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | | | | | | Real = '1.0'
+| | | | | | | | | | | | Expr = 'cfl'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'cfl'
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=tmp*u*w'
+| | | | | | | Variable = 'q'
+| | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | Expr = 'tmp*u*w'
+| | | | | | | | Multiply
+| | | | | | | | | Expr = 'tmp*u'
+| | | | | | | | | | Multiply
+| | | | | | | | | | | Expr = 'tmp'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'tmp'
+| | | | | | | | | | | Expr = 'u'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | Expr = 'w'
+| | | | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | ElseIfBlock
+| | | | | | ElseIfStmt
+| | | | | | | Scalar -> Logical -> Expr = 'u<0._8'
+| | | | | | | | LT
+| | | | | | | | | Expr = 'u'
+| | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | Expr = '0._4'
+| | | | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | | | Real = '0.0'
+| | | | | | Block
+| | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> IfConstruct
+| | | | | | | | IfThenStmt
+| | | | | | | | | Scalar -> Logical -> Expr = 'vol_cfl'
+| | | | | | | | | | Designator -> DataRef -> Name = 'vol_cfl'
+| | | | | | | | Block
+| | | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'cfl=u*dt'
+| | | | | | | | | | Variable = 'cfl'
+| | | | | | | | | | | Designator -> DataRef -> Name = 'cfl'
+| | | | | | | | | | Expr = 'u*dt'
+| | | | | | | | | | | Multiply
+| | | | | | | | | | | | Expr = 'u'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | | | | Expr = 'dt'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'dt'
+| | | | | | | | ElseBlock
+| | | | | | | | | ElseStmt -> 
+| | | | | | | | | Block
+| | | | | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'cfl=u*area'
+| | | | | | | | | | | Variable = 'cfl'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'cfl'
+| | | | | | | | | | | Expr = 'u*area'
+| | | | | | | | | | | | Multiply
+| | | | | | | | | | | | | Expr = 'u'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | | | | | Expr = 'area'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'area'
+| | | | | | | | EndIfStmt -> 
+| | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'w=h_p1*(1._8-cfl)'
+| | | | | | | | Variable = 'w'
+| | | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | | | | Expr = 'h_p1*(1._8-cfl)'
+| | | | | | | | | Multiply
+| | | | | | | | | | Expr = 'h_p1'
+| | | | | | | | | | | Designator -> DataRef -> Name = 'h_p1'
+| | | | | | | | | | Expr = '(1._8-cfl)'
+| | | | | | | | | | | Parentheses -> Expr = '1._8-cfl'
+| | | | | | | | | | | | Subtract
+| | | | | | | | | | | | | Expr = '1._4'
+| | | | | | | | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | | | | | | | Real = '1.0'
+| | | | | | | | | | | | | Expr = 'cfl'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'cfl'
+| | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=tmp*u*w'
+| | | | | | | | Variable = 'q'
+| | | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | | Expr = 'tmp*u*w'
+| | | | | | | | | Multiply
+| | | | | | | | | | Expr = 'tmp*u'
+| | | | | | | | | | | Multiply
+| | | | | | | | | | | | Expr = 'tmp'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'tmp'
+| | | | | | | | | | | | Expr = 'u'
+| | | | | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | | Expr = 'w'
+| | | | | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | ElseBlock
+| | | | | | ElseStmt -> 
+| | | | | | Block
+| | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=0._8'
+| | | | | | | | Variable = 'q'
+| | | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | | Expr = '0._4'
+| | | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | | Real = '0.0'
+| | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'w=5.e-1_8*(h+h_p1)'
+| | | | | | | | Variable = 'w'
+| | | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | | | | Expr = '5.e-1_8*(h+h_p1)'
+| | | | | | | | | Multiply
+| | | | | | | | | | Expr = '5.e-1_4'
+| | | | | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | | | | Real = '0.5'
+| | | | | | | | | | Expr = '(h+h_p1)'
+| | | | | | | | | | | Parentheses -> Expr = 'h+h_p1'
+| | | | | | | | | | | | Add
+| | | | | | | | | | | | | Expr = 'h'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'h'
+| | | | | | | | | | | | | Expr = 'h_p1'
+| | | | | | | | | | | | | | Designator -> DataRef -> Name = 'h_p1'
+| | | | | EndIfStmt -> 
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'dq=tmp*w'
+| | | | | Variable = 'dq'
+| | | | | | Designator -> DataRef -> Name = 'dq'
+| | | | | Expr = 'tmp*w'
+| | | | | | Multiply
+| | | | | | | Expr = 'tmp'
+| | | | | | | | Designator -> DataRef -> Name = 'tmp'
+| | | | | | | Expr = 'w'
+| | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | EndSubroutineStmt -> Name = 'face_flux'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'partial_local'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'q'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'w'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> IfStmt
+| | | | | Scalar -> Logical -> Expr = 'u>0._8'
+| | | | | | GT
+| | | | | | | Expr = 'u'
+| | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | Expr = '0._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '0.0'
+| | | | | ActionStmt -> AssignmentStmt = 'w=u'
+| | | | | | Variable = 'w'
+| | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | | Expr = 'u'
+| | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=q+w'
+| | | | | Variable = 'q'
+| | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | Expr = 'q+w'
+| | | | | | Add
+| | | | | | | Expr = 'q'
+| | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | Expr = 'w'
+| | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | EndSubroutineStmt -> Name = 'partial_local'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'rebound_local'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'q'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'w'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'w=1._8'
+| | | | | Variable = 'w'
+| | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | Expr = '1._4'
+| | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | Real = '1.0'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> IfStmt
+| | | | | Scalar -> Logical -> Expr = 'u>0._8'
+| | | | | | GT
+| | | | | | | Expr = 'u'
+| | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | Expr = '0._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '0.0'
+| | | | | ActionStmt -> AssignmentStmt = 'w=u'
+| | | | | | Variable = 'w'
+| | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | | Expr = 'u'
+| | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=q+w'
+| | | | | Variable = 'q'
+| | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | Expr = 'q+w'
+| | | | | | Add
+| | | | | | | Expr = 'q'
+| | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | Expr = 'w'
+| | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | EndSubroutineStmt -> Name = 'rebound_local'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'logical_local'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'q'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Logical
+| | | | | EntityDecl
+| | | | | | Name = 'pos'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'pos=u>0._8'
+| | | | | Variable = 'pos'
+| | | | | | Designator -> DataRef -> Name = 'pos'
+| | | | | Expr = 'u>0._8'
+| | | | | | GT
+| | | | | | | Expr = 'u'
+| | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | Expr = '0._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '0.0'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> IfStmt
+| | | | | Scalar -> Logical -> Expr = 'pos'
+| | | | | | Designator -> DataRef -> Name = 'pos'
+| | | | | ActionStmt -> AssignmentStmt = 'q=q+u'
+| | | | | | Variable = 'q'
+| | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | Expr = 'q+u'
+| | | | | | | Add
+| | | | | | | | Expr = 'q'
+| | | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | | Expr = 'u'
+| | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | EndSubroutineStmt -> Name = 'logical_local'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'logical_out'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'flag'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Logical
+| | | | | AttrSpec -> IntentSpec -> Intent = Out
+| | | | | EntityDecl
+| | | | | | Name = 'flag'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'flag=u>0._8'
+| | | | | Variable = 'flag'
+| | | | | | Designator -> DataRef -> Name = 'flag'
+| | | | | Expr = 'u>0._8'
+| | | | | | GT
+| | | | | | | Expr = 'u'
+| | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | Expr = '0._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '0.0'
+| | | EndSubroutineStmt -> Name = 'logical_out'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'read_unset'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'q'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'w'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=q+w'
+| | | | | Variable = 'q'
+| | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | Expr = 'q+w'
+| | | | | | Add
+| | | | | | | Expr = 'q'
+| | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | Expr = 'w'
+| | | | | | | | Designator -> DataRef -> Name = 'w'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'w=u'
+| | | | | Variable = 'w'
+| | | | | | Designator -> DataRef -> Name = 'w'
+| | | | | Expr = 'u'
+| | | | | | Designator -> DataRef -> Name = 'u'
+| | | EndSubroutineStmt -> Name = 'read_unset'
+| | ModuleSubprogram -> SubroutineSubprogram
+| | | SubroutineStmt
+| | | | Name = 'uses_grid'
+| | | | DummyArg -> Name = 'u'
+| | | | DummyArg -> Name = 'q'
+| | | | DummyArg -> Name = 'g'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'u'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> Type
+| | | | | | DerivedTypeSpec
+| | | | | | | Name = 'grid_t'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'g'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=q+u*g%dx'
+| | | | | Variable = 'q'
+| | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | Expr = 'q+u*g%dx'
+| | | | | | Add
+| | | | | | | Expr = 'q'
+| | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | | | Expr = 'u*g%dx'
+| | | | | | | | Multiply
+| | | | | | | | | Expr = 'u'
+| | | | | | | | | | Designator -> DataRef -> Name = 'u'
+| | | | | | | | | Expr = 'g%dx'
+| | | | | | | | | | Designator -> DataRef -> StructureComponent
+| | | | | | | | | | | DataRef -> Name = 'g'
+| | | | | | | | | | | Name = 'dx'
+| | | EndSubroutineStmt -> Name = 'uses_grid'
+| EndModuleStmt -> Name = 'test_kernel_join_locals'

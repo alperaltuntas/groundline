@@ -250,6 +250,66 @@ def capped_ratio (a b maxrat : ℝ) : ℝ :=
             extract_kernel(self.ptree, "mixed_outputs")
 
 
+class TestJoinLocalsFixture:
+    """The flux_elem construct set (tests/f90/test_kernel_join_locals): a
+    logical intent(in) dummy as a Bool input used as a bare IF condition; the
+    generalized join with locals (one merged and bound after the join, one
+    inlined and dropped as dead) and nested joins inside branches; an
+    unreferenced derived-type dummy dropped; the `elemental` prefix read
+    past. Siblings pin the refusals at each stage."""
+
+    ptree = F90_DIR / "test_kernel_join_locals_ptree"
+
+    def test_extraction_shape(self):
+        k = extract_kernel(self.ptree, "face_flux")
+        assert [(p.name, p.type, p.intent) for p in k.params] == [
+            ("u", "real", "in"), ("h", "real", "in"), ("h_p1", "real", "in"),
+            ("q", "real", "out"), ("dq", "real", "out"), ("dt", "real", "in"),
+            ("vol_cfl", "logical", "in"), ("area", "real", "in")]   # g dropped
+        assert [p.name for p in k.locals] == ["cfl", "w", "tmp"]
+
+    def test_printed_lean(self):
+        # cfl (assigned in two branches only, never read after) is inlined
+        # and dropped; w (every path, read after) is one merged `let`; the
+        # Bool input gets its own binder group in declaration order.
+        expected = """\
+def face_flux (u h h_p1 q dq dt : ℝ) (vol_cfl : Bool) (area : ℝ) : ℝ × ℝ :=
+  let tmp := area * dt
+  let w := if u > 0 then h * (1 - (if vol_cfl then u * dt else u * area)) else if u < 0 then h_p1 * (1 - (if vol_cfl then u * dt else u * area)) else 0.5 * (h + h_p1)
+  (if u > 0 then tmp * u * (h * (1 - (if vol_cfl then u * dt else u * area))) else if u < 0 then tmp * u * (h_p1 * (1 - (if vol_cfl then u * dt else u * area))) else 0, tmp * w)
+"""
+        assert print_kernel(extract_kernel(self.ptree, "face_flux")) == expected
+
+    def test_prior_binding_is_the_fall_through_value(self):
+        expected = """\
+def rebound_local (u q : ℝ) : ℝ :=
+  let w := 1
+  let w := if u > 0 then u else w
+  q + w
+"""
+        assert print_kernel(extract_kernel(self.ptree, "rebound_local")) == expected
+
+    def test_partial_local_read_after_join_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="only some paths"):
+            print_kernel(extract_kernel(self.ptree, "partial_local"))
+
+    def test_logical_local_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="non-real local"):
+            print_kernel(extract_kernel(self.ptree, "logical_local"))
+
+    def test_logical_output_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="non-real output"):
+            print_kernel(extract_kernel(self.ptree, "logical_out"))
+
+    def test_local_read_before_assignment_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="read before it is assigned"):
+            print_kernel(extract_kernel(self.ptree, "read_unset"))
+
+    def test_referenced_derived_dummy_still_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="non-real, non-logical"):
+            print_kernel(extract_kernel(self.ptree, "uses_grid"))
+
+
 class TestInlineNestsFixture:
     """Rule B addressing: loop nest #N of a subroutine, by source-order
     ordinal (counting both do-concurrent and plain-DO nests), with the
@@ -426,13 +486,15 @@ class TestComponentRefusals:
             pointize(_plain_do_kernel(stmt))
 
 
-class TestJoinRefusals:
-    """The control-flow join is supported in exactly one shape (single-branch
-    If whose branches assign only to state variables); everything else refuses.
-    The supported shape itself is pinned by TestIfStmtJoinFixture."""
+class TestJoinShapes:
+    """The generalized control-flow join (licensed 2026-09-05): statements
+    after an IF merge sequentially over elseif chains, over locals assigned
+    inside branches (bound by a `let` after the join), and through nested IFs
+    inside branches. The one refusal left: a local defined on only some paths,
+    never bound before, and read after the join. Hand-built loop kernels;
+    the fixture-level pins are in TestJoinLocalsFixture."""
 
-    def _kernel(self, if_stmt):
-        after = Assign(ArrayRef("b", (Var("i"),)), ArrayRef("a", (Var("i"),)))
+    def _kernel(self, if_stmt, after):
         return Kernel(
             "k",
             (Param("a", "real", "in", 1), Param("b", "real", "inout", 1),
@@ -442,23 +504,56 @@ class TestJoinRefusals:
                                (if_stmt, after)),),
         )
 
-    def test_local_assignment_in_joined_branch_refused(self):
-        # w is a local: merging it would need a Let to escape the branch.
-        stmt = If(((Var("q"), (Assign(Var("w"), RealLit("1.0")),)),), ())
-        with pytest.raises(UnsupportedConstruct, match="Let may not escape"):
-            print_kernel(pointize(self._kernel(stmt)))
+    @staticmethod
+    def _b_plus(e):
+        return Assign(ArrayRef("b", (Var("i"),)),
+                      BinOp("add", ArrayRef("b", (Var("i"),)), e))
 
-    def test_nested_if_in_joined_branch_refused(self):
-        assign_b = Assign(ArrayRef("b", (Var("i"),)), Var("q"))
-        stmt = If(((Var("q"), (If(((Var("q"), (assign_b,)),), ()),)),), ())
-        with pytest.raises(UnsupportedConstruct, match="only assignments"):
-            print_kernel(pointize(self._kernel(stmt)))
+    def test_elseif_chain_join_merges_as_a_cond_chain(self):
+        set_b = lambda lit: Assign(ArrayRef("b", (Var("i"),)), RealLit(lit))
+        stmt = If(((Cmp("gt", Var("q"), RealLit("0.0")), (set_b("1.0"),)),
+                   (Cmp("lt", Var("q"), RealLit("0.0")), (set_b("2.0"),))), ())
+        text = print_kernel(pointize(self._kernel(stmt, self._b_plus(ArrayRef("a", (Var("i"),))))))
+        assert text == """\
+def k (a b q : ℝ) : ℝ :=
+  (if q > 0 then 1 else if q < 0 then 2 else b) + a
+"""
 
-    def test_elseif_chain_join_refused(self):
-        assign_b = Assign(ArrayRef("b", (Var("i"),)), Var("q"))
-        stmt = If(((Var("q"), (assign_b,)), (Var("q"), (assign_b,))), ())
-        with pytest.raises(UnsupportedConstruct, match="elseif"):
-            print_kernel(pointize(self._kernel(stmt)))
+    def test_local_assigned_on_every_path_is_bound_after_the_join(self):
+        stmt = If(((Cmp("gt", Var("q"), RealLit("0.0")),
+                    (Assign(Var("w"), RealLit("1.0")),)),),
+                  (Assign(Var("w"), RealLit("2.0")),))
+        text = print_kernel(pointize(self._kernel(stmt, self._b_plus(Var("w")))))
+        assert text == """\
+def k (b q : ℝ) : ℝ :=
+  let w := if q > 0 then 1 else 2
+  b + w
+"""
+
+    def test_nested_if_inside_a_joined_branch_merges_recursively(self):
+        set_b = Assign(ArrayRef("b", (Var("i"),)), RealLit("1.0"))
+        inner = If(((Cmp("lt", Var("q"), RealLit("1.0")), (set_b,)),), ())
+        stmt = If(((Cmp("gt", Var("q"), RealLit("0.0")), (inner,)),), ())
+        text = print_kernel(pointize(self._kernel(stmt, self._b_plus(ArrayRef("a", (Var("i"),))))))
+        assert text == """\
+def k (a b q : ℝ) : ℝ :=
+  (if q > 0 then (if q < 1 then 1 else b) else b) + a
+"""
+
+    def test_partial_local_read_after_the_join_refused(self):
+        stmt = If(((Cmp("gt", Var("q"), RealLit("0.0")),
+                    (Assign(Var("w"), RealLit("1.0")),)),), ())
+        with pytest.raises(UnsupportedConstruct, match="only some paths"):
+            print_kernel(pointize(self._kernel(stmt, self._b_plus(Var("w")))))
+
+    def test_partial_local_never_read_after_is_dropped(self):
+        stmt = If(((Cmp("gt", Var("q"), RealLit("0.0")),
+                    (Assign(Var("w"), RealLit("1.0")),)),), ())
+        text = print_kernel(pointize(self._kernel(stmt, self._b_plus(ArrayRef("a", (Var("i"),))))))
+        assert text == """\
+def k (a b q : ℝ) : ℝ :=
+  b + a
+"""
 
 
 class TestFunctionResultRefusals:
@@ -481,7 +576,7 @@ class TestFunctionResultRefusals:
                    (If(((Cmp("gt", Var("c"), RealLit("0.0")),
                          (Assign(Var("r"), Var("a")),)),), ()),
                     Assign(Var("r"), BinOp("add", Var("r"), Var("a")))))
-        with pytest.raises(UnsupportedConstruct, match="only one branch of a joined IF"):
+        with pytest.raises(UnsupportedConstruct, match="only some branches of a joined IF"):
             functionalize(k)
 
     def test_result_kernel_without_inputs_refused_at_print(self):

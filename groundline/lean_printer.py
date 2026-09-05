@@ -17,6 +17,10 @@ from groundline.kir import (
     UnsupportedConstruct, Var, functionalize,
 )
 
+# Lean types of the modeled parameter types: reals are ℝ (VISION D6);
+# logical/bool inputs are Bool (a runtime truth value, decidable in `if`).
+_LEAN_TYPE = {"real": "ℝ", "logical": "Bool"}
+
 # Operator spelling and precedence (higher binds tighter). Lean and Fortran
 # agree on these levels for the supported subset.
 _BIN = {"add": ("+", 1), "sub": ("-", 1), "mul": ("*", 2), "div": ("/", 2),
@@ -101,8 +105,13 @@ def print_expr(e: Expr, parent_prec: int = 0, right: bool = False) -> str:
         # Inline conditional from a merged control-flow join. `if then else`
         # sits below every operator in Lean, so any operand position
         # (parent_prec > 0) needs parentheses.
-        s = (f"if {print_expr(e.cond)} then {print_expr(e.then)} "
-             f"else {print_expr(e.orelse)}")
+        # A Cond directly in the then-slot is parenthesized for readability
+        # (Lean would parse the dangling else correctly, a reader might not);
+        # one in the else-slot chains naturally as `else if … then …`.
+        then = print_expr(e.then)
+        if isinstance(e.then, Cond):
+            then = f"({then})"
+        s = f"if {print_expr(e.cond)} then {then} else {print_expr(e.orelse)}"
         return f"({s})" if parent_prec > 0 else s
     if isinstance(e, ArrayRef):
         raise UnsupportedConstruct(f"array reference '{e.name}' survived pointization")
@@ -152,20 +161,27 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
     single entry point.
     """
     params, outputs, body = functionalize(kernel)
-    non_real = [p for p in params if p.type != "real"]
-    if non_real:
+    out_set = set(outputs)
+    non_real_out = [p.name for p in params if p.name in out_set and p.type != "real"]
+    if non_real_out:
         raise UnsupportedConstruct(
-            f"{kernel.name}: non-real parameters survived pointization: "
-            f"{[p.name for p in non_real]}")
-    # Same discipline for locals: an integer local would be modeled as a real
-    # (hiding the source's truncating integer arithmetic — a wrong model, not
-    # a coarse one). Loop indices never get this far; pointize drops them.
+            f"{kernel.name}: non-real output(s) {non_real_out} — the model "
+            f"returns reals")
+    unknown = [p.name for p in params if p.type not in _LEAN_TYPE]
+    if unknown:
+        raise UnsupportedConstruct(
+            f"{kernel.name}: non-real, non-logical parameters survived "
+            f"pointization: {unknown}")
+    # Locals must be real: an integer local would be modeled as a real (hiding
+    # the source's truncating integer arithmetic — a wrong model, not a coarse
+    # one), and a logical local has no ℝ meaning at all. Loop indices never
+    # get this far; pointize drops them.
     non_real_locals = [p.name for p in kernel.locals if p.type != "real"]
     if non_real_locals:
         raise UnsupportedConstruct(
-            f"{kernel.name}: non-real local(s) {non_real_locals} — integer "
-            f"locals cannot be modeled over ℝ (integer arithmetic truncates; "
-            f"the model would not)")
+            f"{kernel.name}: non-real local(s) {non_real_locals} — only real "
+            f"locals are modeled (an integer local would hide truncation; a "
+            f"logical local has no meaning over ℝ)")
     # A function result is an output the caller supplies no value for, so it
     # is absent from the def's binder list; an inout/out output, whose
     # incoming value the body may read, appears on both sides.
@@ -174,7 +190,16 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
         raise UnsupportedConstruct(
             f"{kernel.name}: no input parameters — a kernel with nothing to "
             f"read has no arguments to model")
-    args = " ".join(p.name for p in inputs)
+    # Binder groups: consecutive inputs of one type share a group, in
+    # declaration order — `(a b : ℝ) (flag : Bool) (c : ℝ)`.
+    groups: list[tuple[str, list[str]]] = []
+    for p in inputs:
+        ty = _LEAN_TYPE[p.type]
+        if groups and groups[-1][0] == ty:
+            groups[-1][1].append(p.name)
+        else:
+            groups.append((ty, [p.name]))
+    binders = " ".join(f"({' '.join(names)} : {ty})" for ty, names in groups)
     ret = " × ".join("ℝ" for _ in outputs)
     results = [p.name for p in params if p.intent == "result"]
     if results:
@@ -190,7 +215,7 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
         what = (f"Outputs `({', '.join(outputs)})` — the {kinds} arguments, "
                 f"modeled functionally over ℝ.")
     doc = f"/-- Generated from {provenance}.\n{what} -/\n" if provenance else ""
-    header = f"{doc}def {kernel.name} ({args} : ℝ) : {ret} :="
+    header = f"{doc}def {kernel.name} {binders} : {ret} :="
     return "\n".join([header] + _print_fun(body, 1)) + "\n"
 
 

@@ -36,8 +36,7 @@ Passes:
     itself refuse — a local scalar read before its first write, which in a
     plain DO would carry the previous iteration's value — cannot produce a
     wrong model either: :func:`functionalize` binds locals per iteration via
-    ``Let``, so such a read prints as an unbound name and the generated Lean
-    fails to elaborate (refusal by the checker, loud).
+    ``Let`` and refuses a read of a local that is not yet in scope.
 
   Derived-type component reads (rule B) are admitted in exactly two shapes,
   both becoming synthesized scalar ``in`` parameters of the pointized kernel:
@@ -58,14 +57,21 @@ Passes:
   ifs) into a single functional expression tree: local assignments become
   ``Let`` bindings, assignments to inout arguments update a symbolic state, and
   each control-flow path ends by materializing the state tuple. Statements
-  *after* an ``If`` (a control-flow join) are supported in exactly one shape:
-  the ``If`` has a single branch (no elseif chain) and every branch body is
-  assignments to state (output) variables only — no locals (a ``Let`` may not
-  escape a branch), no nested ``If``s. Each variable a branch assigned merges
-  as ``state'[v] = Cond(cond, state_then[v], state_else[v])``; the remaining
-  statements then run against the *merged* state, so a later read of a
-  variable the ``If`` may have updated observes the conditional value —
-  sequential semantics, as in the source. Any other join shape is refused.
+  *after* an ``If`` (a control-flow join) are merged **sequentially**: every
+  branch body (then, each elseif, else) is run against a copy of the incoming
+  state — assignments update it, locals assigned inside the branch are
+  tracked in that copy (so later reads within the branch see them), and a
+  nested ``If`` inside the branch merges recursively against it — and each
+  variable some branch assigned becomes a conditional chain over the branch
+  conditions, ``Cond(c1, s1[v], Cond(c2, s2[v], … s_else[v]))``. Merged
+  *outputs* update the state; merged *locals* are bound by ``Let`` right
+  after the join (in first-assignment order), so the statements that follow
+  run against the merged values — sequential semantics, as in the source. A
+  local assigned on only some paths takes its prior ``Let`` binding on the
+  others when it has one; when it has none it is undefined there, so it is
+  dropped if nothing after the join reads it and **refused** if something
+  does (a conservative read scan — never a wrong model). A local read before
+  any assignment refuses outright.
 
   A *function* kernel (Fortran ``function … result(r)``; a non-void C++ point
   function) carries its result as a parameter of intent ``result``: the
@@ -224,7 +230,7 @@ Stmt = Union[Assign, If, DoConcurrent, Do]
 @dataclass(frozen=True)
 class Param:
     name: str
-    type: str          # 'real' | 'integer' | 'derived:<name>'
+    type: str          # 'real' | 'integer' | 'logical' | 'derived:<name>'
     intent: Optional[str]   # 'in' | 'inout' | 'out' | 'result' | None (local)
     rank: int          # 0 = scalar
 
@@ -446,6 +452,81 @@ class Tuple_:
 FunExpr = Union[Let, IfExpr, Tuple_]
 
 
+def _names_in_expr(e: Expr, out: set[str]) -> None:
+    """Every variable name read in ``e`` (array/component bases included)."""
+    if isinstance(e, Var):
+        out.add(e.name)
+    elif isinstance(e, ArrayRef):
+        out.add(e.name)
+        for sub in e.subscripts:
+            _names_in_expr(sub, out)
+    elif isinstance(e, ComponentRef):
+        out.add(e.base)
+        for sub in e.subscripts:
+            _names_in_expr(sub, out)
+    elif isinstance(e, (Paren, Neg)):
+        _names_in_expr(e.inner, out)
+    elif isinstance(e, (BinOp, Cmp)):
+        _names_in_expr(e.lhs, out)
+        _names_in_expr(e.rhs, out)
+    elif isinstance(e, Call):
+        for a in e.args:
+            _names_in_expr(a, out)
+    elif isinstance(e, Cond):
+        _names_in_expr(e.cond, out)
+        _names_in_expr(e.then, out)
+        _names_in_expr(e.orelse, out)
+
+
+def _names_in_stmt(s: Stmt, out: set[str]) -> None:
+    """Every variable name occurring in ``s`` — reads and write targets."""
+    if isinstance(s, Assign):
+        _names_in_expr(s.target, out)
+        _names_in_expr(s.value, out)
+    elif isinstance(s, If):
+        for (c, body) in s.branches:
+            _names_in_expr(c, out)
+            for x in body:
+                _names_in_stmt(x, out)
+        for x in s.orelse:
+            _names_in_stmt(x, out)
+    elif isinstance(s, DoConcurrent):
+        for (idx, lo, hi) in s.controls:
+            out.add(idx)
+            _names_in_expr(lo, out)
+            _names_in_expr(hi, out)
+        for x in s.body:
+            _names_in_stmt(x, out)
+    elif isinstance(s, Do):
+        idx, lo, hi = s.control
+        out.add(idx)
+        _names_in_expr(lo, out)
+        _names_in_expr(hi, out)
+        for x in s.body:
+            _names_in_stmt(x, out)
+
+
+def _reads_before_redef(name: str, stmts: tuple[Stmt, ...]) -> bool:
+    """Could the statements read ``name`` before unconditionally reassigning
+    it? Conservative: any occurrence inside an ``If`` (conditions or branches)
+    counts as a read, since a redefinition there is only conditional. Used to
+    decide whether a local left undefined on some path of a join is dead."""
+    for s in stmts:
+        if isinstance(s, Assign):
+            reads: set[str] = set()
+            _names_in_expr(s.value, reads)
+            if name in reads:
+                return True
+            if isinstance(s.target, Var) and s.target.name == name:
+                return False          # unconditionally redefined before any read
+            continue
+        names: set[str] = set()
+        _names_in_stmt(s, names)
+        if name in names:
+            return True
+    return False
+
+
 def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], FunExpr]:
     """Translate the (pointized) imperative body into one functional expression.
 
@@ -454,7 +535,8 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
     ``result`` parameter of a function kernel; ``expr`` evaluates to their
     tuple. Locals become ``Let`` bindings; an ``inout``/``out`` output's
     current value is tracked symbolically, starting at its own input ``Var``;
-    a ``result`` starts unbound (see the module docstring).
+    a ``result`` starts unbound (see the module docstring, which also states
+    the control-flow-join semantics implemented by ``merge_if`` below).
     """
     outputs = tuple(p.name for p in kernel.params
                     if p.intent in ("inout", "out", "result"))
@@ -476,81 +558,142 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 f"assigned on every control-flow path")
         return Tuple_(tuple(state[o] for o in outputs))
 
-    def go(stmts: tuple[Stmt, ...], state: dict[str, Expr]) -> FunExpr:
+    def go(stmts: tuple[Stmt, ...], state: dict[str, Expr],
+           bound: frozenset[str]) -> FunExpr:
+        """``state``: the outputs' current symbolic values (a result only once
+        assigned); ``bound``: the locals currently in scope via ``Let``."""
         if not stmts:
             return materialize(state)
         head, rest = stmts[0], stmts[1:]
         if isinstance(head, Assign):
             name = head.target.name
-            value = subst(head.value, state)
+            value = subst(head.value, state, bound)
             if name in local_names:
-                return Let(name, value, go(rest, state))
+                return Let(name, value, go(rest, state, bound | {name}))
             if name in outputs:
-                return go(rest, {**state, name: value})
+                return go(rest, {**state, name: value}, bound)
             raise UnsupportedConstruct(
                 f"{kernel.name}: assignment to '{name}', neither local nor output")
         if isinstance(head, If):
             if rest:
                 # Control-flow join: the remaining statements run against the
-                # MERGED state, so a later read of a variable this IF may have
-                # updated observes the conditional value (sequential semantics).
-                return go(rest, merge_if(head, state))
+                # MERGED state, with the merged locals bound first, so a later
+                # read of anything this IF may have updated observes the
+                # conditional value (sequential semantics).
+                merged, merged_locals, _ = merge_if(head, state, bound, rest)
+
+                def bind(items: list[tuple[str, Expr]],
+                         bound_now: frozenset[str]) -> FunExpr:
+                    if not items:
+                        return go(rest, merged, bound_now)
+                    (v, e), tail = items[0], items[1:]
+                    return Let(v, e, bind(tail, bound_now | {v}))
+                return bind(list(merged_locals.items()), bound)
+
             def branch(i: int) -> FunExpr:
                 if i < len(head.branches):
                     cond, body = head.branches[i]
-                    return IfExpr(subst(cond, state), go(body, dict(state)), branch(i + 1))
-                return go(head.orelse, dict(state))
+                    return IfExpr(subst(cond, state, bound),
+                                  go(body, dict(state), bound), branch(i + 1))
+                return go(head.orelse, dict(state), bound)
             return branch(0)
         raise UnsupportedConstruct(f"{kernel.name}: {type(head).__name__} is unsupported here")
 
-    def merge_if(head: If, state: dict[str, Expr]) -> dict[str, Expr]:
-        """Merge an ``If`` that statements follow into a per-variable ``Cond``.
+    def merge_if(head: If, state: dict[str, Expr], bound: frozenset[str],
+                 continuation: tuple[Stmt, ...]
+                 ) -> tuple[dict[str, Expr], dict[str, Expr], list[str]]:
+        """Merge an ``If`` that statements follow (``continuation`` = everything
+        that executes after it, used only for the dead-local scan).
 
-        Supported ONLY when the ``If`` has a single branch (no elseif chain)
-        and every branch body consists solely of assignments to state (output)
-        variables — no locals (a ``Let`` may not escape), no nested ``If``s.
-        Per variable a branch assigned: ``state'[v] = Cond(cond, state_then[v],
-        state_else[v])``; unassigned variables pass through unchanged.
+        Returns ``(state', merged_locals, changed)``: the outputs' merged
+        state, the locals to bind after the join (first-assignment order),
+        and the names of every variable the merge touched.
         """
-        if len(head.branches) != 1:
-            raise UnsupportedConstruct(
-                f"{kernel.name}: statements after an IF with an elseif chain "
-                f"(control-flow join) are unsupported")
-        cond, then_body = head.branches[0]
-
-        def branch_state(body: tuple[Stmt, ...]) -> tuple[dict[str, Expr], set[str]]:
-            st, assigned = dict(state), set()
-            for s in body:
-                if not isinstance(s, Assign):
-                    raise UnsupportedConstruct(
-                        f"{kernel.name}: statements after an IF (control-flow join) "
-                        f"require its branches to hold only assignments to output "
-                        f"variables; found {type(s).__name__}")
-                if s.target.name not in outputs:
-                    raise UnsupportedConstruct(
-                        f"{kernel.name}: assignment to non-output '{s.target.name}' "
-                        f"inside a joined IF branch (a Let may not escape the branch)")
-                st[s.target.name] = subst(s.value, st)
-                assigned.add(s.target.name)
-            return st, assigned
-
-        st_then, asg_then = branch_state(then_body)
-        st_else, asg_else = branch_state(head.orelse)
-        cond_now = subst(cond, state)
+        conds = [subst(c, state, bound) for (c, _) in head.branches]
+        bodies = [b for (_, b) in head.branches] + [head.orelse]
+        states: list[dict[str, Expr]] = []
+        order: list[str] = []
+        for body in bodies:
+            st, assigned = branch_state(body, state, bound, continuation)
+            states.append(st)
+            for v in assigned:
+                if v not in order:
+                    order.append(v)
         merged = dict(state)
-        for v in asg_then | asg_else:
-            if v not in st_then or v not in st_else:
-                # Only a `result` can be missing from a side: inout/out
-                # outputs are in `state` from the start.
-                raise UnsupportedConstruct(
-                    f"{kernel.name}: function result '{v}' is assigned in only "
-                    f"one branch of a joined IF — undefined on the other path")
-            merged[v] = Cond(cond_now, st_then[v], st_else[v])
-        return merged
+        merged_locals: dict[str, Expr] = {}
+        changed: list[str] = []
+        for v in order:
+            values: Optional[list[Expr]] = []
+            for st in states:
+                if v in st:
+                    values.append(st[v])
+                elif v in local_names and v in bound:
+                    values.append(Var(v))     # this path keeps the prior binding
+                elif v in local_names:
+                    values = None             # undefined on this path
+                    break
+                else:
+                    # Only a `result` can be missing from a side: inout/out
+                    # outputs are in `state` from the start.
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: function result '{v}' is assigned in "
+                        f"only some branches of a joined IF — undefined on the "
+                        f"other paths")
+            if values is None:
+                if _reads_before_redef(v, continuation):
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: local '{v}' is assigned on only some "
+                        f"paths of a joined IF, was not assigned before it, "
+                        f"and is read after the join — undefined on the other "
+                        f"paths")
+                continue                      # dead after the join: dropped
+            expr = values[-1]
+            for c, val in reversed(list(zip(conds, values[:-1]))):
+                expr = Cond(c, val, expr)
+            if v in local_names:
+                merged_locals[v] = expr
+            else:
+                merged[v] = expr
+            changed.append(v)
+        return merged, merged_locals, changed
 
-    def subst(e: Expr, state: dict[str, Expr]) -> Expr:
-        """Replace reads of *output* variables with their current symbolic value.
-        (Locals are bound by ``Let`` and read by name, so they pass through.)
+    def branch_state(body: tuple[Stmt, ...], state: dict[str, Expr],
+                     bound: frozenset[str], continuation: tuple[Stmt, ...]
+                     ) -> tuple[dict[str, Expr], list[str]]:
+        """Run one branch body sequentially against a copy of the incoming
+        state. Locals assigned here are tracked in the copy (later reads within
+        the branch substitute them), so the merge can pair per-path values.
+        Returns the branch's outgoing state and the names it assigned, in order."""
+        st, assigned = dict(state), []
+        for idx, s in enumerate(body):
+            if isinstance(s, Assign):
+                name = s.target.name
+                if name not in outputs and name not in local_names:
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: assignment to '{name}', neither local "
+                        f"nor output")
+                st[name] = subst(s.value, st, bound)
+                if name not in assigned:
+                    assigned.append(name)
+            elif isinstance(s, If):
+                # A nested IF (a join inside the branch, or its tail): merge it
+                # against the branch state; everything after it — the rest of
+                # this branch, then the outer continuation — is what may read
+                # the values it leaves.
+                inner_cont = tuple(body[idx + 1:]) + continuation
+                st, inner_locals, changed = merge_if(s, st, bound, inner_cont)
+                st.update(inner_locals)
+                for v in changed:
+                    if v not in assigned:
+                        assigned.append(v)
+            else:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: {type(s).__name__} inside a joined IF "
+                    f"branch is unsupported")
+        return st, assigned
+
+    def subst(e: Expr, state: dict[str, Expr], bound: frozenset[str]) -> Expr:
+        """Replace reads of tracked variables with their current symbolic value.
 
         Unconditional on purpose: when the current value is the identity
         ``Var(name)`` the substitution is a no-op, and when it is any other
@@ -558,28 +701,40 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         must see it, or a later statement would silently read the *input*
         value. Sequential threading is the whole contract here.
 
-        The caller supplies no value for a function result (unlike an
-        inout/out argument), so reading it before its first assignment reads
-        an undefined value in the source — refused here."""
-        if isinstance(e, Var) and e.name in state:
-            return state[e.name]
-        if isinstance(e, Var) and e.name in results:
-            raise UnsupportedConstruct(
-                f"{kernel.name}: function result '{e.name}' is read before it "
-                f"is assigned")
+        A local read by name must be in scope (``bound``) or tracked in
+        ``state`` (inside a joined branch); otherwise it is read before any
+        assignment — an undefined value in the source — and refuses. The
+        caller supplies no value for a function result (unlike an inout/out
+        argument), so reading it before its first assignment refuses the same
+        way."""
+        if isinstance(e, Var):
+            if e.name in state:
+                return state[e.name]
+            if e.name in results:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: function result '{e.name}' is read before it "
+                    f"is assigned")
+            if e.name in local_names and e.name not in bound:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: local '{e.name}' is read before it is "
+                    f"assigned")
+            return e
         if isinstance(e, Paren):
-            return Paren(subst(e.inner, state))
+            return Paren(subst(e.inner, state, bound))
         if isinstance(e, Neg):
-            return Neg(subst(e.inner, state))
+            return Neg(subst(e.inner, state, bound))
         if isinstance(e, BinOp):
-            return BinOp(e.op, subst(e.lhs, state), subst(e.rhs, state))
+            return BinOp(e.op, subst(e.lhs, state, bound), subst(e.rhs, state, bound))
         if isinstance(e, Cmp):
-            return Cmp(e.op, subst(e.lhs, state), subst(e.rhs, state))
+            return Cmp(e.op, subst(e.lhs, state, bound), subst(e.rhs, state, bound))
         if isinstance(e, Call):
-            return Call(e.name, tuple(subst(a, state) for a in e.args))
+            return Call(e.name, tuple(subst(a, state, bound) for a in e.args))
+        if isinstance(e, Cond):
+            return Cond(subst(e.cond, state, bound), subst(e.then, state, bound),
+                        subst(e.orelse, state, bound))
         return e
 
     # inout/out outputs start at the value the caller passed in; a result
     # starts unbound — the caller passes nothing in for it.
     state0: dict[str, Expr] = {o: Var(o) for o in outputs if o not in results}
-    return kernel.params, outputs, go(kernel.body, state0)
+    return kernel.params, outputs, go(kernel.body, state0, frozenset())
