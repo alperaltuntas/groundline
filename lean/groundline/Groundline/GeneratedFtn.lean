@@ -67,6 +67,13 @@ Outputs `(dz)` — the `intent(inout)` arguments, modeled functionally over ℝ.
 def thickness_to_dz_3d_nonboussinesq (h dz h_to_rz spv_avg : ℝ) : ℝ :=
   h_to_rz * h * spv_avg
 
+/-- Generated from `ratio_max` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump).
+Result `ratio` — the function result, modeled functionally over ℝ. -/
+def ratio_max (a b maxrat : ℝ) : ℝ :=
+  if |a| > |maxrat * b| then
+    maxrat
+  else a / b
+
 end
 
 end Groundline.GeneratedFtn

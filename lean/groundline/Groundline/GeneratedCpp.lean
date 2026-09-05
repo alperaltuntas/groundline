@@ -74,6 +74,13 @@ Outputs `(dz)` — the `intent(inout)` arguments, modeled functionally over ℝ.
 def thickness_to_dz_3d_nonboussinesq_point (dz h spv h_to_rz : ℝ) : ℝ :=
   h_to_rz * h * spv
 
+/-- Generated from `ratio_max_point` in `submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp` (clang JSON AST).
+Result `ratio_max_point` — the function result, modeled functionally over ℝ. -/
+def ratio_max_point (a b maxrat : ℝ) : ℝ :=
+  if |a| > |maxrat * b| then
+    maxrat
+  else a / b
+
 end
 
 end Groundline.GeneratedCpp

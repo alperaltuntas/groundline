@@ -53,10 +53,10 @@ project = "../lean/groundline"
 
 # --- The banked pairs (5 of 5 TIM point kernels; DEVLOG 2026-07-31) ---------
 #
-# Every Fortran kernel below is a loop nest in the source, compared against a
-# per-point C++ function — `pointize = true` licenses reducing each loop to
-# its per-point body (see the manual's Pointize page for the two iteration
-# licenses that justify it).
+# Every Fortran kernel in this group is a loop nest in the source, compared
+# against a per-point C++ function — `pointize = true` licenses reducing each
+# loop to its per-point body (see the manual's Pointize page for the two
+# iteration licenses that justify it).
 
 [[kernel]]
 name = "ppm_limit_pos"
@@ -94,3 +94,8 @@ name = "thickness_to_dz_3d_nonboussinesq"
 fortran = { dump = "MOM6/MOM_interface_heights.o_ptree", subroutine = "thickness_to_dz_3d", nest = 2 }
 cpp = { source = "mom_interface_heights_kernel.hpp", function = "thickness_to_dz_3d_nonboussinesq_point" }
 pointize = true
+
+[[kernel]]
+name = "ratio_max"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "ratio_max" }
+cpp = { source = "mom_continuity_ppm_kernel.hpp", function = "ratio_max_point" }
