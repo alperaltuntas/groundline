@@ -6,6 +6,7 @@ import Groundline.SeqSchema
 import Groundline.EdgeThicknessUpwind
 import Groundline.ThicknessToDz
 import Groundline.RatioMax
+import Groundline.FluxElem
 import Groundline.QuickstartEquiv
 
 set_option linter.style.header false
@@ -65,6 +66,11 @@ no `sorryAx`. The output is checked by eye in the build log.
 #print axioms Groundline.GeneratedCpp.ratio_max_point
 #print axioms Groundline.ratioMax_point_equiv
 #print axioms Groundline.ratioMax_kernel_equiv
+
+#print axioms Groundline.GeneratedFtn.flux_elem
+#print axioms Groundline.GeneratedCpp.flux_elem_point
+#print axioms Groundline.fluxElem_point_equiv
+#print axioms Groundline.fluxElem_kernel_equiv
 
 -- The quickstart pair (examples/quickstart/kernels.toml)
 #print axioms Quickstart.GeneratedFtn.scale_clip_acc

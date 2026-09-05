@@ -81,6 +81,13 @@ def ratio_max_point (a b maxrat : ℝ) : ℝ :=
     maxrat
   else a / b
 
+/-- Generated from `flux_elem_point` in `submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp` (clang JSON AST).
+Outputs `(uh, duhdu)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def flux_elem_point (u h h_p1 h_L h_L_p1 h_R h_R_p1 uh duhdu visc_rem G_dy_Cu G_IareaT G_IareaT_p1 G_IdxT G_IdxT_p1 dt : ℝ) (vol_CFL : Bool) (por_face_area : ℝ) : ℝ × ℝ :=
+  let tmp := G_dy_Cu * por_face_area
+  let h_marg := if u > 0 then h_R + (if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) * (h_L - h_R + 3 * ((h_L + h_R) - 2 * h) * ((if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) - 1)) else if u < 0 then h_L_p1 + (if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) * (h_R_p1 - h_L_p1 + 3 * ((h_L_p1 + h_R_p1) - 2 * h_p1) * ((if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) - 1)) else 0.5 * (h_L_p1 + h_R)
+  (if u > 0 then tmp * u * (h_R + (if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) * (0.5 * (h_L - h_R) + ((h_L + h_R) - 2 * h) * ((if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) - 1.5))) else if u < 0 then tmp * u * (h_L_p1 + (if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) * (0.5 * (h_R_p1 - h_L_p1) + ((h_L_p1 + h_R_p1) - 2 * h_p1) * ((if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) - 1.5))) else 0, tmp * h_marg * visc_rem)
+
 end
 
 end Groundline.GeneratedCpp

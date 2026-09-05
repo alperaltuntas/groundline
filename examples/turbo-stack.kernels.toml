@@ -99,3 +99,12 @@ pointize = true
 name = "ratio_max"
 fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "ratio_max" }
 cpp = { source = "mom_continuity_ppm_kernel.hpp", function = "ratio_max_point" }
+
+[[kernel]]
+# The PPM face flux and its velocity derivative — the physics of the whole
+# mass-flux family. An ELEMENTAL subroutine (per-point as written); its
+# logical dummy vol_CFL is a Bool input, and the grid structs G/GV/US, which
+# the body never references, are dropped.
+name = "flux_elem"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "flux_elem" }
+cpp = { source = "mom_continuity_ppm_kernel.hpp", function = "flux_elem_point" }

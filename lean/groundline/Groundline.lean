@@ -8,6 +8,7 @@ import Groundline.SeqSchema
 import Groundline.EdgeThicknessUpwind
 import Groundline.ThicknessToDz
 import Groundline.RatioMax
+import Groundline.FluxElem
 import Groundline.AxiomsAudit
 import Groundline.QuickstartFtn
 import Groundline.QuickstartCpp

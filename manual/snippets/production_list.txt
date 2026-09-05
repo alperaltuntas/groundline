@@ -1,4 +1,4 @@
-manifest: /glade/work/altuntas/turbo-stack/dev-utils/groundline/examples/turbo-stack.kernels.toml  (6 kernel(s))
+manifest: /glade/work/altuntas/turbo-stack/dev-utils/groundline/examples/turbo-stack.kernels.toml  (7 kernel(s))
 ppm_limit_pos
     fortran: subroutine 'ppm_limit_pos' in MOM6/MOM_continuity_PPM.o_ptree  [ok]
     cpp:     function 'ppm_limit_pos_point' in submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp  [ok]
@@ -17,5 +17,8 @@ thickness_to_dz_3d_nonboussinesq
 ratio_max
     fortran: subroutine 'ratio_max' in MOM6/MOM_continuity_PPM.o_ptree  [ok]
     cpp:     function 'ratio_max_point' in submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp  [ok]
+flux_elem
+    fortran: subroutine 'flux_elem' in MOM6/MOM_continuity_PPM.o_ptree  [ok]
+    cpp:     function 'flux_elem_point' in submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp  [ok]
 fortran generated module: /glade/work/altuntas/turbo-stack/dev-utils/groundline/lean/groundline/Groundline/GeneratedFtn.lean  [present]
 cpp generated module: /glade/work/altuntas/turbo-stack/dev-utils/groundline/lean/groundline/Groundline/GeneratedCpp.lean  [present]

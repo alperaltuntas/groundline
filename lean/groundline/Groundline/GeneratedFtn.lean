@@ -74,6 +74,13 @@ def ratio_max (a b maxrat : ℝ) : ℝ :=
     maxrat
   else a / b
 
+/-- Generated from `flux_elem` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump).
+Outputs `(uh, duhdu)` — the `intent(out)` arguments, modeled functionally over ℝ. -/
+def flux_elem (u h h_p1 h_l h_l_p1 h_r h_r_p1 uh duhdu visc_rem g_dy_cu g_iareat g_iareat_p1 g_idxt g_idxt_p1 dt : ℝ) (vol_cfl : Bool) (por_face_area : ℝ) : ℝ × ℝ :=
+  let tmp := g_dy_cu * por_face_area
+  let h_marg := if u > 0 then h_r + (if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) * (h_l - h_r + 3 * ((h_l + h_r) - 2 * h) * ((if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) - 1)) else if u < 0 then h_l_p1 + (if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) * (h_r_p1 - h_l_p1 + 3 * ((h_l_p1 + h_r_p1) - 2 * h_p1) * ((if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) - 1)) else 0.5 * (h_l_p1 + h_r)
+  (if u > 0 then tmp * u * (h_r + (if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) * (0.5 * (h_l - h_r) + ((h_l + h_r) - 2 * h) * ((if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) - 1.5))) else if u < 0 then tmp * u * (h_l_p1 + (if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) * (0.5 * (h_r_p1 - h_l_p1) + ((h_l_p1 + h_r_p1) - 2 * h_p1) * ((if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) - 1.5))) else 0, tmp * h_marg * visc_rem)
+
 end
 
 end Groundline.GeneratedFtn
