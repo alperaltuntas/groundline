@@ -29,9 +29,9 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from groundline.kir import (
-    ArrayRef, Assign, BinOp, Call, Cmp, ComponentRef, Do, DoConcurrent, Expr,
-    If, IntLit, Kernel, Neg, Param, Paren, RealLit, Stmt, UnsupportedConstruct,
-    Var,
+    ArrayRef, Assign, BinOp, Call, CallStmt, Cmp, ComponentRef, Do, DoConcurrent,
+    Expr, If, IntLit, Kernel, Neg, Param, Paren, RealLit, Slice, Stmt,
+    UnsupportedConstruct, Var, _names_in_stmt as _kir_names_in_stmt,
 )
 from groundline.frontend._flang_text import level
 from groundline.frontend.kernel_base import FortranKernelSpec
@@ -298,9 +298,7 @@ def _extract_dataref(n: Node) -> Expr:
     if inner.name == "StructureComponent":
         return _extract_component(inner, ())
     if inner.name == "ArrayElement":
-        subs = tuple(extract_expr(s.child("Integer").child("Expr"))
-                     if s.children and s.children[0].name == "Integer"
-                     else extract_expr(_descend_subscript(s))
+        subs = tuple(_extract_subscript(s)
                      for s in inner.children_named("SectionSubscript"))
         base = inner.child("DataRef").only_child()
         if base.name == "Name":
@@ -309,6 +307,22 @@ def _extract_dataref(n: Node) -> Expr:
             return _extract_component(base, subs)
         raise UnsupportedConstruct(f"array-element base '{base.name}'")
     raise UnsupportedConstruct(f"data reference '{inner.name}'")
+
+
+def _extract_subscript(s: Node) -> Expr:
+    """One ``SectionSubscript``: an integer expression, or a bare ``:``
+    (``SubscriptTriplet`` with no bounds — a whole-dimension section, kept as
+    :class:`~groundline.kir.Slice` for the column pass's whole-array
+    assignment; a triplet with bounds or a stride refuses)."""
+    if s.children and s.children[0].name == "Integer":
+        return extract_expr(s.children[0].child("Expr"))
+    if s.children and s.children[0].name == "SubscriptTriplet":
+        trip = s.children[0]
+        if trip.children:
+            raise UnsupportedConstruct(
+                "array section with bounds or a stride (only a bare ':' is modeled)")
+        return Slice()
+    return extract_expr(_descend_subscript(s))
 
 
 def _extract_component(sc: Node, subscripts: tuple[Expr, ...]) -> ComponentRef:
@@ -364,6 +378,19 @@ def _extract_action(action: Node) -> Stmt:
         # condition. Extracted as a single-branch If with no orelse.
         cond = extract_expr(stmt.child("Scalar").child("Logical").child("Expr"))
         return If(((cond, (_extract_action(stmt.child("ActionStmt")),)),), ())
+    if stmt.name == "CallStmt":
+        # `call f(a, b(i,j,k), …)` — the actuals in source order (keyword
+        # actuals refuse: the column pass matches positionally). Resolved
+        # against a banked callee by the column pass; refused elsewhere.
+        call = stmt.child("Call")
+        name = call.child("ProcedureDesignator").child("Name").payload
+        args = []
+        for spec in call.children_named("ActualArgSpec"):
+            if spec.children_named("Keyword"):
+                raise UnsupportedConstruct(
+                    f"call to '{name}' with a keyword actual (positional only)")
+            args.append(extract_expr(spec.child("ActualArg").child("Expr")))
+        return CallStmt(name, tuple(args))
     raise UnsupportedConstruct(f"action statement '{stmt.name}'")
 
 
@@ -458,8 +485,14 @@ def _parse_type_decl(tds: Node) -> list[Param]:
             pass
         else:
             raise UnsupportedConstruct(f"attribute '{kid.name}'")
-    return [Param(ent.child("Name").payload, type_, intent, rank)
-            for ent in tds.children_named("EntityDecl")]
+    # An array shape may sit on the entity (`u(0:n, m, nz)`) instead of a
+    # `dimension` attribute; either way the rank is the number of extents.
+    out = []
+    for ent in tds.children_named("EntityDecl"):
+        spec = ent.children_named("ArraySpec")
+        r = len(spec[0].children_named("ExplicitShapeSpec")) if spec else rank
+        out.append(Param(ent.child("Name").payload, type_, intent, r))
+    return out
 
 
 def _type_decls(spec: Node):
@@ -660,6 +693,169 @@ def _loop_kernel_from_root(root: Node, subroutine: str, nest: int,
 
 
 # --------------------------------------------------------------------------- #
+# Column-kernel mode: pruning under declared hypotheses, then extraction
+# --------------------------------------------------------------------------- #
+
+def _operative(n: Node) -> Node:
+    """Descend the transparent wrappers of a condition (Scalar/Logical/Expr/
+    Parentheses) to the node that decides it."""
+    while n.name in ("Scalar", "Logical", "Expr", "Parentheses") and len(n.children) == 1:
+        n = n.children[0]
+    return n
+
+
+def _flag_name(n: Node) -> Optional[str]:
+    """The variable a designator names — `x` or the base of `x(...)` — else None."""
+    n = _operative(n)
+    if n.name != "Designator":
+        return None
+    dr = n.child("DataRef").only_child()
+    if dr.name == "Name":
+        return dr.payload
+    if dr.name == "ArrayElement":
+        base = dr.child("DataRef").only_child()
+        return base.payload if base.name == "Name" else None
+    return None
+
+
+def _decided_false(cond: Node, assume: dict[str, bool]) -> bool:
+    """A condition the hypotheses decide false: an assumed-false flag (or an
+    element of an assumed-false flag array), or a conjunction with such an
+    operand. Nothing else is decided — a condition the pass cannot decide is
+    left for extraction to model (or refuse)."""
+    n = _operative(cond)
+    name = _flag_name(n)
+    if name is not None:
+        return assume.get(name) is False
+    if n.name == "AND":
+        return any(_decided_false(c, assume) for c in n.children_named("Expr"))
+    return False
+
+
+def _assignment_target(stmt: Node) -> Optional[str]:
+    return _flag_name(stmt.child("Variable").child("Designator"))
+
+
+def _prune_block(block: Node, assume: dict[str, bool], ignore: set[str],
+                 dead: set[str]) -> None:
+    kept = []
+    for epc in block.children:
+        if epc.name != "ExecutionPartConstruct":
+            kept.append(epc)
+            continue
+        if not _prune_construct(epc.only_child().only_child(), assume, ignore, dead):
+            kept.append(epc)
+    block.children = kept
+
+
+def _prune_construct(inner: Node, assume: dict[str, bool], ignore: set[str],
+                     dead: set[str]) -> bool:
+    """True iff the construct is to be dropped. Drops: calls declared
+    ignorable; assignments to an assumed flag or to a dead integer local; an
+    IF whose condition the hypotheses decide false (no elseif/else allowed);
+    and, after pruning inside, any IF or DO left with nothing to do — its
+    condition is then never modeled, which is sound because Fortran
+    conditions have no side effects."""
+    if inner.name == "ActionStmt":
+        stmt = inner.only_child()
+        if stmt.name == "CallStmt":
+            name = stmt.child("Call").child("ProcedureDesignator").child("Name").payload
+            return name in ignore
+        if stmt.name == "AssignmentStmt":
+            target = _assignment_target(stmt)
+            return target is not None and (target in assume or target in dead)
+        if stmt.name == "IfStmt":
+            if _decided_false(stmt.child("Scalar").child("Logical").child("Expr"), assume):
+                return True
+            return _prune_construct(stmt.child("ActionStmt"), assume, ignore, dead)
+        return False
+    if inner.name == "IfConstruct":
+        kids = inner.children
+        cond = kids[0].child("Scalar").child("Logical").child("Expr")
+        has_else = any(k.name in ("ElseIfBlock", "ElseBlock") for k in kids)
+        if _decided_false(cond, assume):
+            if has_else:
+                raise UnsupportedConstruct(
+                    "an IF construct decided false by a hypothesis, but carrying "
+                    "elseif/else branches — reducing it is not yet supported")
+            return True
+        empty = True
+        for k in kids:
+            blk = k if k.name == "Block" else (k.child("Block") if k.name in ("ElseIfBlock", "ElseBlock") else None)
+            if blk is not None:
+                _prune_block(blk, assume, ignore, dead)
+                empty = empty and not blk.children
+        return empty
+    if inner.name == "DoConstruct":
+        blk = inner.child("Block")
+        _prune_block(blk, assume, ignore, dead)
+        return not blk.children
+    return False
+
+
+def _dead_integer_locals(sub: Node, decls: list[Param], arg_order: tuple[str, ...]) -> set[str]:
+    """Integer locals whose every occurrence is an assignment target or a loop
+    bound — pure address bookkeeping (`ish = LB%ish`, `nz = GV%ke`). Their
+    assignments carry nothing the model reads, so the pruner drops them."""
+    candidates = {d.name for d in decls
+                  if d.type == "integer" and d.name not in arg_order}
+    reads: set[str] = set()
+
+    def walk(n: Node, in_bounds: bool) -> None:
+        if n.name == "LoopControl":
+            in_bounds = True
+        if n.name == "Variable":
+            # the target's base name is a write, its subscripts are reads
+            des = n.child("Designator").child("DataRef").only_child()
+            if des.name == "ArrayElement":
+                for sub_ in des.children_named("SectionSubscript"):
+                    walk(sub_, in_bounds)
+            return
+        if n.name == "StructureComponent":
+            # `lb_in%ish`: the base is a read, the component name is not a variable
+            walk(n.child("DataRef"), in_bounds)
+            return
+        if n.name == "Name" and n.payload and not in_bounds:
+            reads.add(n.payload)
+        for c in n.children:
+            walk(c, in_bounds)
+
+    walk(sub.child("ExecutionPart"), False)
+    return {c for c in candidates if c not in reads}
+
+
+def _column_kernel_from_root(root: Node, subroutine: str, *, assume: dict[str, bool],
+                             ignore_calls: set[str]) -> Kernel:
+    """Column mode: the whole subroutine, declarations inherited tolerantly (as
+    in inline-loop mode), the body pruned under the manifest's hypotheses
+    before any expression is extracted, then extracted with its loops intact
+    for :func:`groundline.column.columnize`."""
+    sub = find_procedure(root, subroutine)
+    sig = _signature(sub)
+    decls, poisoned = _extract_decls_tolerant(sub.child("SpecificationPart"))
+    dead = _dead_integer_locals(sub, decls, sig.args)
+    _prune_block(sub.child("ExecutionPart").child("Block"), assume, set(ignore_calls), dead)
+    body = extract_block(sub.child("ExecutionPart").child("Block"))
+    by_name = {d.name: d for d in decls}
+    used: set[str] = set()
+    for stmt in body:
+        _kir_names_in_stmt(stmt, used)
+    for n in sorted(used - by_name.keys()):
+        reason = poisoned.get(n, "no declaration found")
+        raise UnsupportedConstruct(f"{subroutine}: references '{n}' — {reason}")
+    params = tuple(by_name[a] for a in sig.args if a in used)
+    locals_ = tuple(d for d in decls if d.name in used and d.name not in set(sig.args))
+    return Kernel(subroutine, params, locals_, body)
+
+
+def procedure_dummies(root: Node, name: str) -> tuple[str, ...]:
+    """The full dummy list of a procedure, in source order — what a caller's
+    positional actuals are matched against (the callee's own extraction may
+    have dropped some of these)."""
+    return _signature(find_procedure(root, name)).args
+
+
+# --------------------------------------------------------------------------- #
 # The seam object (KernelFrontend)
 # --------------------------------------------------------------------------- #
 
@@ -672,13 +868,22 @@ class FlangKernelFrontend:
     importable for tests that pin them directly — but the spec path is the
     supported entry point."""
 
-    def extract(self, spec: FortranKernelSpec) -> Kernel:
+    def root(self, spec: FortranKernelSpec) -> Node:
         if spec.source is not None:
             text = dump_parse_tree(spec.source, flang=spec.compiler)
-            root = parse_dump_lines(text.splitlines())
-        else:
-            with open(spec.dump) as f:
-                root = parse_dump_lines(f)
+            return parse_dump_lines(text.splitlines())
+        with open(spec.dump) as f:
+            return parse_dump_lines(f)
+
+    def extract(self, spec: FortranKernelSpec) -> Kernel:
+        root = self.root(spec)
+        return self.extract_from_root(root, spec)
+
+    def extract_from_root(self, root: Node, spec: FortranKernelSpec) -> Kernel:
+        if spec.columns:
+            return _column_kernel_from_root(
+                root, spec.subroutine, assume=dict(spec.assume),
+                ignore_calls=set(spec.ignore_calls))
         if spec.nest is None:
             return _kernel_from_root(root, spec.subroutine)
         return _loop_kernel_from_root(root, spec.subroutine, spec.nest,

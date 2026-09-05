@@ -92,11 +92,11 @@ def _cmd_show(args: argparse.Namespace) -> int:
             print(f"note: '{e.fortran.compiler}' not on PATH — skipping the "
                   f"Fortran side", file=sys.stderr)
         else:
-            shown.append(print_kernel(kb.extract_fortran_entry(e),
+            shown.append(print_kernel(kb.extract_fortran_entry(e, m),
                                       provenance=kb.fortran_provenance(e)))
     if e.cpp is not None:
         if shutil.which(e.cpp.compiler):
-            shown.append(print_kernel(kb.extract_cpp_entry(e),
+            shown.append(print_kernel(kb.extract_cpp_entry(e, m),
                                       provenance=kb.cpp_provenance(e)))
         else:
             print(f"note: '{e.cpp.compiler}' not on PATH — skipping the C++ "
@@ -105,10 +105,10 @@ def _cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def _extract_verbosely(entries, extract, provenance) -> list:
+def _extract_verbosely(entries, extract, provenance, m) -> list:
     rendered = []
     for e in entries:
-        kernel = extract(e)
+        kernel = extract(e, m)
         rendered.append((kernel, provenance(e)))
         print(f"extracted {kernel.name}: "
               f"params={[p.name for p in kernel.params]} "
@@ -121,12 +121,12 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     if not args.skip_fortran and m.fortran is not None:
         text = kb.render_fortran(m, _extract_verbosely(
             kb.fortran_entries(m), kb.extract_fortran_entry,
-            kb.fortran_provenance))
+            kb.fortran_provenance, m))
         m.fortran.generated.write_text(text)
         print(f"wrote {m.fortran.generated}")
     if not args.skip_cpp and m.cpp is not None:
         text = kb.render_cpp(m, _extract_verbosely(
-            kb.cpp_entries(m), kb.extract_cpp_entry, kb.cpp_provenance))
+            kb.cpp_entries(m), kb.extract_cpp_entry, kb.cpp_provenance, m))
         m.cpp.generated.write_text(text)
         print(f"wrote {m.cpp.generated}")
     return 0

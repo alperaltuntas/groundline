@@ -205,8 +205,51 @@ class Cond:
     orelse: "Expr"
 
 
+@dataclass(frozen=True)
+class Slice:
+    """A bare ``:`` subscript — a whole-dimension section. Appears only in the
+    target of a whole-array assignment (``a(:,:) = e``), which the column pass
+    turns into a per-column scalar assignment; anywhere else it refuses."""
+
+
+@dataclass(frozen=True)
+class App:
+    """A per-k array read after the column pass: ``name`` applied at the fold
+    or map index (Lean: ``name k``). Produced only by ``column.columnize``."""
+    name: str
+    index: str
+
+
+@dataclass(frozen=True)
+class Proj:
+    """Tuple projection ``(inner).idx`` (1-based) — how a call's several
+    outputs are bound one by one (Lean: ``(f a b).1``)."""
+    inner: "Expr"
+    idx: int
+
+
+@dataclass(frozen=True)
+class Lam:
+    """``fun index => body`` — the value of a per-k array produced by a map
+    over the fold index (a Map statement's result)."""
+    index: str
+    body: "Expr"
+
+
+@dataclass(frozen=True)
+class Foldl:
+    """``ks.foldl (fun state index => step) init`` — a sequential fold over
+    the k-enumeration with one state variable. ``step`` is a functional
+    expression over ``state`` (and the per-k arrays in scope) that evaluates
+    to the new state. The enumeration is the def's ``ks`` binder."""
+    index: str
+    state: str
+    init: "Expr"
+    step: "FunExpr"
+
+
 Expr = Union[RealLit, IntLit, Var, ArrayRef, ComponentRef, Paren, Neg, BinOp,
-             Cmp, Call, Cond]
+             Cmp, Call, Cond, Slice, App, Proj, Lam, Foldl]
 
 
 # --------------------------------------------------------------------------- #
@@ -244,7 +287,49 @@ class Do:
     body: tuple["Stmt", ...]
 
 
-Stmt = Union[Assign, If, DoConcurrent, Do]
+@dataclass(frozen=True)
+class CallStmt:
+    """A call statement as the frontends see it: ``call f(a, b(i,j,k), …)``
+    / ``f(a, b(i,j,k), out1, out2);`` with the actual arguments in source
+    order. Resolved against the banked callee by ``column.columnize`` into a
+    :class:`CallBind`; a call anywhere else (point kernels) refuses."""
+    callee: str
+    args: tuple["Expr", ...]
+
+
+@dataclass(frozen=True)
+class CallBind:
+    """A resolved call to a banked primitive: ``args`` are the actuals for the
+    callee's kept parameters in the callee's order (an ``out`` slot carries a
+    ``0`` placeholder, an ``inout`` slot the actual's current value); ``outs``
+    are the names that receive the callee's outputs, in the callee's output
+    order. Functionalize binds ``out_i := (callee args).i``."""
+    callee: str
+    args: tuple["Expr", ...]
+    outs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MapStmt:
+    """A pure map over the fold index: the body writes per-k arrays (each at
+    its own ``index`` cell — after the column pass, plain ``Var`` targets) and
+    reads only loop-entry data. Each written array becomes
+    ``let a := fun index => …``."""
+    index: str
+    body: tuple["Stmt", ...]
+
+
+@dataclass(frozen=True)
+class FoldStmt:
+    """A sequential fold over the fold index with per-column ``state`` names;
+    the body is the step. Per-k reads are ``App``s; every write in the body
+    lands in a state name or a body-local."""
+    index: str
+    state: tuple[str, ...]
+    body: tuple["Stmt", ...]
+
+
+Stmt = Union[Assign, If, DoConcurrent, Do, CallStmt, CallBind, MapStmt, FoldStmt]
 
 
 # --------------------------------------------------------------------------- #
@@ -254,7 +339,7 @@ Stmt = Union[Assign, If, DoConcurrent, Do]
 @dataclass(frozen=True)
 class Param:
     name: str
-    type: str          # 'real' | 'integer' | 'logical' | 'derived:<name>'
+    type: str          # 'real' | 'integer' | 'logical' | 'derived:<name>' | 'real[k]' (a per-k array, column kernels)
     intent: Optional[str]   # 'in' | 'inout' | 'out' | 'result' | None (local)
     rank: int          # 0 = scalar
 
@@ -265,6 +350,7 @@ class Kernel:
     params: tuple[Param, ...]   # dummy arguments, in source order
     locals: tuple[Param, ...]   # local declarations (intent None)
     body: tuple[Stmt, ...]
+    column: bool = False        # a column kernel: binds `{κ} (ks : List κ)`, may use App/Lam/Foldl
 
 
 # --------------------------------------------------------------------------- #
@@ -594,6 +680,28 @@ def _names_in_expr(e: Expr, out: set[str]) -> None:
         _names_in_expr(e.cond, out)
         _names_in_expr(e.then, out)
         _names_in_expr(e.orelse, out)
+    elif isinstance(e, App):
+        out.add(e.name)
+    elif isinstance(e, Proj):
+        _names_in_expr(e.inner, out)
+    elif isinstance(e, Lam):
+        _names_in_expr(e.body, out)
+    elif isinstance(e, Foldl):
+        _names_in_expr(e.init, out)
+        _names_in_fun(e.step, out)
+
+
+def _names_in_fun(fe: "FunExpr", out: set[str]) -> None:
+    if isinstance(fe, Let):
+        _names_in_expr(fe.value, out)
+        _names_in_fun(fe.body, out)
+    elif isinstance(fe, IfExpr):
+        _names_in_expr(fe.cond, out)
+        _names_in_fun(fe.then, out)
+        _names_in_fun(fe.orelse, out)
+    elif isinstance(fe, Tuple_):
+        for e in fe.elems:
+            _names_in_expr(e, out)
 
 
 def _names_in_stmt(s: Stmt, out: set[str]) -> None:
@@ -622,6 +730,18 @@ def _names_in_stmt(s: Stmt, out: set[str]) -> None:
         _names_in_expr(hi, out)
         for x in s.body:
             _names_in_stmt(x, out)
+    elif isinstance(s, CallStmt):
+        for a in s.args:
+            _names_in_expr(a, out)
+    elif isinstance(s, CallBind):
+        for a in s.args:
+            _names_in_expr(a, out)
+        out.update(s.outs)
+    elif isinstance(s, (MapStmt, FoldStmt)):
+        if isinstance(s, FoldStmt):
+            out.update(s.state)
+        for x in s.body:
+            _names_in_stmt(x, out)
 
 
 def _reads_before_redef(name: str, stmts: tuple[Stmt, ...]) -> bool:
@@ -643,6 +763,59 @@ def _reads_before_redef(name: str, stmts: tuple[Stmt, ...]) -> bool:
         if name in names:
             return True
     return False
+
+
+def reads_before_write(name: str, stmts: tuple[Stmt, ...]) -> bool:
+    """Could ``stmts`` read ``name`` before every path has assigned it? Walks
+    control flow precisely enough for the point subset: an ``If`` counts as
+    writing ``name`` only when every branch (including an absent else, which
+    writes nothing) does. Used to tell a C++ ``Real &`` parameter the callee
+    never reads — an *output* in Fortran's sense — from a true ``inout``."""
+
+    def walk(body: tuple[Stmt, ...], written: bool) -> tuple[bool, bool]:
+        for s in body:
+            if isinstance(s, Assign):
+                reads: set[str] = set()
+                _names_in_expr(s.value, reads)
+                if isinstance(s.target, ArrayRef):
+                    for sub in s.target.subscripts:
+                        _names_in_expr(sub, reads)
+                if name in reads and not written:
+                    return True, written
+                if isinstance(s.target, Var) and s.target.name == name:
+                    written = True
+            elif isinstance(s, If):
+                all_written = True
+                for (c, b) in s.branches:
+                    reads = set()
+                    _names_in_expr(c, reads)
+                    if name in reads and not written:
+                        return True, written
+                    r, w = walk(b, written)
+                    if r:
+                        return True, written
+                    all_written = all_written and w
+                r, w = walk(s.orelse, written)
+                if r:
+                    return True, written
+                all_written = all_written and w
+                written = all_written
+            elif isinstance(s, (CallStmt, CallBind)):
+                reads = set()
+                for a in s.args:
+                    _names_in_expr(a, reads)
+                if name in reads and not written:
+                    return True, written
+                if isinstance(s, CallBind) and name in s.outs:
+                    written = True
+            else:
+                names: set[str] = set()
+                _names_in_stmt(s, names)
+                if name in names and not written:
+                    return True, written
+        return False, written
+
+    return walk(stmts, False)[0]
 
 
 def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], FunExpr]:
@@ -668,28 +841,32 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
             f"one kernel")
     local_names = {p.name for p in kernel.locals}
 
-    def materialize(state: dict[str, Expr]) -> Tuple_:
-        missing = [o for o in outputs if o not in state]
+    def materialize(state: dict[str, Expr], outs: tuple[str, ...]) -> Tuple_:
+        missing = [o for o in outs if o not in state]
         if missing:
             raise UnsupportedConstruct(
                 f"{kernel.name}: function result '{missing[0]}' is not "
                 f"assigned on every control-flow path")
-        return Tuple_(tuple(state[o] for o in outputs))
+        return Tuple_(tuple(state[o] for o in outs))
 
     def go(stmts: tuple[Stmt, ...], state: dict[str, Expr],
-           bound: frozenset[str]) -> FunExpr:
+           bound: frozenset[str], outs: tuple[str, ...]) -> FunExpr:
         """``state``: the outputs' current symbolic values (a result only once
-        assigned); ``bound``: the locals currently in scope via ``Let``."""
+        assigned); ``bound``: the locals currently in scope via ``Let``;
+        ``outs``: the names the path materializes — the kernel's outputs, or
+        a fold step's state variable."""
         if not stmts:
-            return materialize(state)
+            return materialize(state, outs)
         head, rest = stmts[0], stmts[1:]
         if isinstance(head, Assign):
             name = head.target.name
             value = subst(head.value, state, bound)
+            if name in outs:                     # a fold's state variable, or an output
+                return go(rest, {**state, name: value}, bound, outs)
             if name in local_names:
-                return Let(name, value, go(rest, state, bound | {name}))
+                return Let(name, value, go(rest, state, bound | {name}, outs))
             if name in outputs:
-                return go(rest, {**state, name: value}, bound)
+                return go(rest, {**state, name: value}, bound, outs)
             raise UnsupportedConstruct(
                 f"{kernel.name}: assignment to '{name}', neither local nor output")
         if isinstance(head, If):
@@ -698,12 +875,12 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 # MERGED state, with the merged locals bound first, so a later
                 # read of anything this IF may have updated observes the
                 # conditional value (sequential semantics).
-                merged, merged_locals, _ = merge_if(head, state, bound, rest)
+                merged, merged_locals, _ = merge_if(head, state, bound, rest, outs)
 
                 def bind(items: list[tuple[str, Expr]],
                          bound_now: frozenset[str]) -> FunExpr:
                     if not items:
-                        return go(rest, merged, bound_now)
+                        return go(rest, merged, bound_now, outs)
                     (v, e), tail = items[0], items[1:]
                     return Let(v, e, bind(tail, bound_now | {v}))
                 return bind(list(merged_locals.items()), bound)
@@ -712,13 +889,95 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 if i < len(head.branches):
                     cond, body = head.branches[i]
                     return IfExpr(subst(cond, state, bound),
-                                  go(body, dict(state), bound), branch(i + 1))
-                return go(head.orelse, dict(state), bound)
+                                  go(body, dict(state), bound, outs), branch(i + 1))
+                return go(head.orelse, dict(state), bound, outs)
             return branch(0)
+        if isinstance(head, CallBind):
+            # out_i := (callee args).i, in the callee's output order; a local
+            # receiver is Let-bound, a state/output receiver is updated.
+            call = Call(head.callee, tuple(subst(a, state, bound) for a in head.args))
+
+            def bind_outs(items: list[tuple[int, str]], st: dict[str, Expr],
+                          bnd: frozenset[str]) -> FunExpr:
+                if not items:
+                    return go(rest, st, bnd, outs)
+                (i, name), tail = items[0], items[1:]
+                value = Proj(call, i)
+                if name in outs or name in outputs:
+                    return bind_outs(tail, {**st, name: value}, bnd)
+                if name in local_names:
+                    return Let(name, value, bind_outs(tail, st, bnd | {name}))
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: call output bound to '{name}', neither local "
+                    f"nor output")
+            return bind_outs(list(enumerate(head.outs, 1)), state, bound)
+        if isinstance(head, MapStmt):
+            # Each per-k array the body writes becomes `let a := fun k => …`;
+            # within the body, later statements read earlier targets' values.
+            values: dict[str, Expr] = {}
+            order: list[str] = []
+
+            def map_subst(e: Expr) -> Expr:
+                return subst_apps(subst(e, state, bound), values)
+            for s in head.body:
+                if isinstance(s, Assign):
+                    values[s.target.name] = map_subst(s.value)
+                    if s.target.name not in order:
+                        order.append(s.target.name)
+                elif isinstance(s, CallBind):
+                    call = Call(s.callee, tuple(map_subst(a) for a in s.args))
+                    for i, name in enumerate(s.outs, 1):
+                        values[name] = Proj(call, i)
+                        if name not in order:
+                            order.append(name)
+                else:
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: a map over {head.index} may contain only "
+                        f"assignments and calls to banked primitives, not "
+                        f"{type(s).__name__}")
+
+            def bind_maps(names: list[str], st: dict[str, Expr],
+                          bnd: frozenset[str]) -> FunExpr:
+                if not names:
+                    return go(rest, st, bnd, outs)
+                name, tail = names[0], names[1:]
+                value = Lam(head.index, values[name])
+                if name in local_names:
+                    return Let(name, value, bind_maps(tail, st, bnd | {name}))
+                if name in outputs:
+                    # Bound by `let` (shadowing the binder) so later per-k reads
+                    # print as `name k`; the output then refers to the let.
+                    return Let(name, value,
+                               bind_maps(tail, {**st, name: Var(name)}, bnd | {name}))
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: map target '{name}', neither local nor output")
+            return bind_maps(order, state, bound)
+        if isinstance(head, FoldStmt):
+            if len(head.state) != 1:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: a fold with several state variables "
+                    f"{list(head.state)} is not yet supported")
+            v = head.state[0]
+            if v in state:
+                init = state[v]
+            elif v in local_names and v in bound:
+                init = Var(v)
+            else:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: fold state '{v}' is read before it is assigned")
+            step = go(head.body, {**state, v: Var(v)}, bound | {v}, (v,))
+            value = Foldl(head.index, v, init, step)
+            if v in local_names or v in outputs:
+                # `let v := ks.foldl …` — shadowing the binder or the earlier
+                # let; the state (if v is an output) now refers to the let.
+                st = {**state, v: Var(v)} if v in state else state
+                return Let(v, value, go(rest, st, bound | {v}, outs))
+            raise UnsupportedConstruct(
+                f"{kernel.name}: fold state '{v}', neither local nor output")
         raise UnsupportedConstruct(f"{kernel.name}: {type(head).__name__} is unsupported here")
 
     def merge_if(head: If, state: dict[str, Expr], bound: frozenset[str],
-                 continuation: tuple[Stmt, ...]
+                 continuation: tuple[Stmt, ...], outs: tuple[str, ...]
                  ) -> tuple[dict[str, Expr], dict[str, Expr], list[str]]:
         """Merge an ``If`` that statements follow (``continuation`` = everything
         that executes after it, used only for the dead-local scan).
@@ -732,7 +991,7 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         states: list[dict[str, Expr]] = []
         order: list[str] = []
         for body in bodies:
-            st, assigned = branch_state(body, state, bound, continuation)
+            st, assigned = branch_state(body, state, bound, continuation, outs)
             states.append(st)
             for v in assigned:
                 if v not in order:
@@ -745,9 +1004,9 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
             for st in states:
                 if v in st:
                     values.append(st[v])
-                elif v in local_names and v in bound:
+                elif v in local_names and v in bound and v not in outs:
                     values.append(Var(v))     # this path keeps the prior binding
-                elif v in local_names:
+                elif v in local_names and v not in outs:
                     values = None             # undefined on this path
                     break
                 else:
@@ -768,7 +1027,7 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
             expr = values[-1]
             for c, val in reversed(list(zip(conds, values[:-1]))):
                 expr = Cond(c, val, expr)
-            if v in local_names:
+            if v in local_names and v not in outs:
                 merged_locals[v] = expr
             else:
                 merged[v] = expr
@@ -776,8 +1035,8 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         return merged, merged_locals, changed
 
     def branch_state(body: tuple[Stmt, ...], state: dict[str, Expr],
-                     bound: frozenset[str], continuation: tuple[Stmt, ...]
-                     ) -> tuple[dict[str, Expr], list[str]]:
+                     bound: frozenset[str], continuation: tuple[Stmt, ...],
+                     outs: tuple[str, ...]) -> tuple[dict[str, Expr], list[str]]:
         """Run one branch body sequentially against a copy of the incoming
         state. Locals assigned here are tracked in the copy (later reads within
         the branch substitute them), so the merge can pair per-path values.
@@ -786,20 +1045,26 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         for idx, s in enumerate(body):
             if isinstance(s, Assign):
                 name = s.target.name
-                if name not in outputs and name not in local_names:
+                if name not in outputs and name not in local_names and name not in outs:
                     raise UnsupportedConstruct(
                         f"{kernel.name}: assignment to '{name}', neither local "
                         f"nor output")
                 st[name] = subst(s.value, st, bound)
                 if name not in assigned:
                     assigned.append(name)
+            elif isinstance(s, CallBind):
+                call = Call(s.callee, tuple(subst(a, st, bound) for a in s.args))
+                for i, name in enumerate(s.outs, 1):
+                    st[name] = Proj(call, i)
+                    if name not in assigned:
+                        assigned.append(name)
             elif isinstance(s, If):
                 # A nested IF (a join inside the branch, or its tail): merge it
                 # against the branch state; everything after it — the rest of
                 # this branch, then the outer continuation — is what may read
                 # the values it leaves.
                 inner_cont = tuple(body[idx + 1:]) + continuation
-                st, inner_locals, changed = merge_if(s, st, bound, inner_cont)
+                st, inner_locals, changed = merge_if(s, st, bound, inner_cont, outs)
                 st.update(inner_locals)
                 for v in changed:
                     if v not in assigned:
@@ -850,9 +1115,40 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         if isinstance(e, Cond):
             return Cond(subst(e.cond, state, bound), subst(e.then, state, bound),
                         subst(e.orelse, state, bound))
+        if isinstance(e, Proj):
+            return Proj(subst(e.inner, state, bound), e.idx)
+        if isinstance(e, Lam):
+            return Lam(e.index, subst(e.body, state, bound))
+        if isinstance(e, Foldl):
+            return Foldl(e.index, e.state, subst(e.init, state, bound), e.step)
+        if isinstance(e, Slice):
+            raise UnsupportedConstruct(
+                f"{kernel.name}: an array section survived the column pass")
+        return e          # App (a per-k read of a bound array), literals
+
+    def subst_apps(e: Expr, values: dict[str, Expr]) -> Expr:
+        """Within a map body: a per-k read of a target this body already
+        assigned sees the assigned value (sequential semantics along k)."""
+        if isinstance(e, App) and e.name in values:
+            return values[e.name]
+        if isinstance(e, Paren):
+            return Paren(subst_apps(e.inner, values))
+        if isinstance(e, Neg):
+            return Neg(subst_apps(e.inner, values))
+        if isinstance(e, BinOp):
+            return BinOp(e.op, subst_apps(e.lhs, values), subst_apps(e.rhs, values))
+        if isinstance(e, Cmp):
+            return Cmp(e.op, subst_apps(e.lhs, values), subst_apps(e.rhs, values))
+        if isinstance(e, Call):
+            return Call(e.name, tuple(subst_apps(a, values) for a in e.args))
+        if isinstance(e, Cond):
+            return Cond(subst_apps(e.cond, values), subst_apps(e.then, values),
+                        subst_apps(e.orelse, values))
+        if isinstance(e, Proj):
+            return Proj(subst_apps(e.inner, values), e.idx)
         return e
 
     # inout/out outputs start at the value the caller passed in; a result
     # starts unbound — the caller passes nothing in for it.
     state0: dict[str, Expr] = {o: Var(o) for o in outputs if o not in results}
-    return kernel.params, outputs, go(kernel.body, state0, frozenset())
+    return kernel.params, outputs, go(kernel.body, state0, frozenset(), outputs)

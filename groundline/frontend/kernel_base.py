@@ -48,6 +48,14 @@ class FortranKernelSpec:
     compiler: str = "flang"
     nest: Optional[int] = None
     def_name: Optional[str] = None
+    # Column-kernel addressing (docs/COLUMN_KERNELS.md): the column indices
+    # (every other loop index is the vertical fold index), the manifest's
+    # declared hypotheses (`assume`: flag name → value; guarded blocks are
+    # pruned before modeling), and the procedure calls declared ignorable
+    # (timers). `columns` set means column mode.
+    columns: tuple[str, ...] = ()
+    assume: tuple[tuple[str, bool], ...] = ()
+    ignore_calls: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.dump is None) == (self.source is None):
@@ -59,6 +67,10 @@ class FortranKernelSpec:
             raise ValueError(
                 f"FortranKernelSpec({self.subroutine!r}): nest and def_name "
                 f"must be given together (inline-loop addressing) or not at all")
+        if self.columns and self.nest is not None:
+            raise ValueError(
+                f"FortranKernelSpec({self.subroutine!r}): columns (column-kernel "
+                f"mode) and nest (inline-loop mode) are exclusive")
 
 
 @dataclass(frozen=True)
@@ -71,6 +83,12 @@ class CppKernelSpec:
     function: str
     include_dirs: tuple[str, ...] = ()
     compiler: str = "clang++"
+    # Column-kernel addressing: the ordinal (1-based, source order) of the
+    # `ParallelFor` call in `function` whose lambda is the kernel, the lambda's
+    # column index names, and the declared hypotheses (see FortranKernelSpec).
+    parallel_for: Optional[int] = None
+    columns: tuple[str, ...] = ()
+    assume: tuple[tuple[str, bool], ...] = ()
 
 
 @runtime_checkable

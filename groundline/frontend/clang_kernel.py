@@ -36,8 +36,8 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from groundline.kir import (
-    Assign, BinOp, Call, Cmp, Expr, If, Kernel, Neg, Param, Paren, RealLit,
-    Stmt, UnsupportedConstruct, Var,
+    ArrayRef, Assign, BinOp, Call, CallStmt, Cmp, ComponentRef, Do, Expr, If,
+    IntLit, Kernel, Neg, Param, Paren, RealLit, Stmt, UnsupportedConstruct, Var,
 )
 from groundline.frontend.kernel_base import CppKernelSpec
 
@@ -218,7 +218,64 @@ def extract_expr(n: dict) -> Expr:
         raise UnsupportedConstruct(f"binary operator '{op}' in expression position")
     if kind == "CallExpr":
         return _extract_call(n)
+    if kind == "CXXOperatorCallExpr":
+        return _extract_array_read(n)
+    if kind == "MemberExpr":
+        # `CS.vol_CFL`: a member of a struct parameter — rule B's mirror.
+        if n.get("isArrow"):
+            raise UnsupportedConstruct("member access through a pointer ('->')")
+        base = _unwrap_casts(_only(n, "MemberExpr"))
+        if base.get("kind") != "DeclRefExpr" or \
+                base.get("referencedDecl", {}).get("kind") != "ParmVarDecl":
+            raise UnsupportedConstruct("member read on something other than a parameter")
+        return ComponentRef(base["referencedDecl"]["name"], n["name"], ())
     raise UnsupportedConstruct(f"expression node '{kind}'")
+
+
+def _extract_array_read(n: dict) -> ArrayRef:
+    """``a(i, j, k)`` on an ``Array4`` parameter — ``operator()`` applied to
+    the array and three index expressions. Indices are addresses: a lambda
+    column index or the loop variable (a ``DeclRefExpr``), one of them plus
+    or minus an integer literal (a stencil), or a trailing literal ``0`` — the
+    unit third extent AMReX gives 2-D fields, dropped so the reference has
+    the column shape. Anything else in an index position refuses."""
+    kids = _inner(n)
+    if not kids:
+        raise UnsupportedConstruct("operator call with no callee")
+    callee = _unwrap_casts(kids[0])
+    if callee.get("referencedDecl", {}).get("name") != "operator()":
+        raise UnsupportedConstruct(
+            f"operator '{callee.get('referencedDecl', {}).get('name')}'")
+    if len(kids) != 5:
+        raise UnsupportedConstruct(f"operator() with {len(kids) - 2} indices (3 expected)")
+    arr = _unwrap_casts(kids[1])
+    if arr.get("kind") != "DeclRefExpr" or \
+            arr.get("referencedDecl", {}).get("kind") != "ParmVarDecl":
+        raise UnsupportedConstruct("Array4 access on something other than a parameter")
+    subs: list[Expr] = []
+    for pos, idx in enumerate(kids[2:]):
+        idx = _unwrap_casts(idx)
+        if idx.get("kind") == "IntegerLiteral":
+            if pos == 2 and idx.get("value") == "0":
+                continue                 # the unit third extent of a 2-D field
+            raise UnsupportedConstruct(
+                f"literal index '{idx.get('value')}' in position {pos + 1}")
+        subs.append(_extract_index(idx))
+    return ArrayRef(arr["referencedDecl"]["name"], tuple(subs))
+
+
+def _extract_index(n: dict) -> Expr:
+    """An index expression: a variable, or variable ± integer literal."""
+    n = _unwrap_casts(n)
+    if n.get("kind") == "DeclRefExpr":
+        return Var(n["referencedDecl"]["name"])
+    if n.get("kind") == "BinaryOperator" and n.get("opcode") in ("+", "-"):
+        a, b = _inner(n)
+        a, b = _unwrap_casts(a), _unwrap_casts(b)
+        if a.get("kind") == "DeclRefExpr" and b.get("kind") == "IntegerLiteral":
+            return BinOp("add" if n["opcode"] == "+" else "sub",
+                         Var(a["referencedDecl"]["name"]), IntLit(b["value"]))
+    raise UnsupportedConstruct(f"index expression '{n.get('kind')}'")
 
 
 def _extract_udl(n: dict) -> RealLit:
@@ -277,22 +334,50 @@ _REAL_LOCAL_TYPES = {"Real", "const Real", "double", "const double"}
 
 
 def _extract_stmts(n: dict, locals_out: list[Param], *,
-                   result: Optional[str] = None, tail: bool = False) -> list[Stmt]:
+                   result: Optional[str] = None, tail: bool = False,
+                   column: Optional["_ColumnCtx"] = None) -> list[Stmt]:
     """One statement node → kernel-IR statements. ``locals_out`` accumulates
     the VarDecls encountered (C++ declares locals inline, not up front).
 
     ``result`` is the name the kernel's return value is assigned to (``None``
     for a void kernel); ``tail`` says whether this statement is in tail
     position — the only place a ``return`` may appear (see the module
-    docstring)."""
+    docstring). ``column`` is set inside a ``ParallelFor`` lambda (column
+    mode): it carries the hypotheses that prune guarded blocks and admits
+    the column shapes — Array4 writes, ``for k`` loops, ``+=``, and call
+    statements to banked primitives."""
     kind = n.get("kind")
     if kind == "CompoundStmt":
         out: list[Stmt] = []
         kids = _inner(n)
         for i, c in enumerate(kids):
             out.extend(_extract_stmts(c, locals_out, result=result,
-                                      tail=tail and i == len(kids) - 1))
+                                      tail=tail and i == len(kids) - 1,
+                                      column=column))
         return out
+    if column is not None:
+        if kind == "CompoundAssignOperator" and n.get("opcode") == "+=":
+            lhs, rhs = _inner(n)
+            target = _extract_target(lhs, locals_out)
+            read = target if isinstance(target, Var) else ArrayRef(target.name, target.subscripts)
+            return [Assign(target, BinOp("add", read, extract_expr(rhs)))]
+        if kind == "CallExpr":
+            # A call statement: `f(a, b(i,j,k), out1, out2);` — the actuals in
+            # order; `Real&` receivers arrive as bare DeclRefExprs (lvalues).
+            kids = _inner(n)
+            callee = _unwrap_casts(kids[0])
+            fname = callee.get("referencedDecl", {}).get("name")
+            if callee.get("kind") != "DeclRefExpr" or fname is None:
+                raise UnsupportedConstruct("call statement with a non-function callee")
+            return [CallStmt(fname, tuple(_extract_actual(a) for a in kids[1:]))]
+        if kind == "ForStmt":
+            return [_extract_for(n, locals_out, column)]
+        if kind == "IfStmt" and _cxx_decided_false(_inner(n)[0], column.assume):
+            if n.get("hasElse"):
+                raise UnsupportedConstruct(
+                    "an `if` decided false by a hypothesis, but carrying an else "
+                    "branch — reducing it is not yet supported")
+            return []
     if kind == "DeclStmt":
         out = []
         for vd in _inner(n):
@@ -305,6 +390,8 @@ def _extract_stmts(n: dict, locals_out: list[Param], *,
         if len(kids) != 2:
             raise UnsupportedConstruct("assignment with unexpected shape")
         lhs, rhs = kids
+        if column is not None and lhs.get("kind") == "CXXOperatorCallExpr":
+            return [Assign(_extract_array_read(lhs), extract_expr(rhs))]
         ref = lhs.get("referencedDecl", {}) if lhs.get("kind") == "DeclRefExpr" else {}
         is_local = (ref.get("kind") == "VarDecl"
                     and any(l.name == ref.get("name") for l in locals_out))
@@ -314,7 +401,7 @@ def _extract_stmts(n: dict, locals_out: list[Param], *,
                 f"declared local; got '{lhs.get('kind')}'")
         return [Assign(Var(ref["name"]), extract_expr(rhs))]
     if kind == "IfStmt":
-        return [_extract_if(n, locals_out, result=result, tail=tail)]
+        return [_extract_if(n, locals_out, result=result, tail=tail, column=column)]
     if kind == "ReturnStmt":
         # The return value is the kernel's single output: `return e` assigns
         # it. Only in tail position — an early return would make the
@@ -361,8 +448,84 @@ def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Optional[Stmt]:
     return Assign(Var(name), extract_expr(_only(vd, f"VarDecl '{name}'")))
 
 
+def _extract_target(lhs: dict, locals_out: list[Param]) -> Var | ArrayRef:
+    if lhs.get("kind") == "CXXOperatorCallExpr":
+        return _extract_array_read(lhs)
+    ref = lhs.get("referencedDecl", {}) if lhs.get("kind") == "DeclRefExpr" else {}
+    if ref.get("kind") == "ParmVarDecl" or (
+            ref.get("kind") == "VarDecl" and any(l.name == ref.get("name") for l in locals_out)):
+        return Var(ref["name"])
+    raise UnsupportedConstruct(
+        f"assignment target must be a parameter, a declared local or an Array4 "
+        f"cell; got '{lhs.get('kind')}'")
+
+
+def _extract_actual(a: dict) -> Expr:
+    """A call actual: a bare lvalue (a `Real&` receiver, a local) or a value."""
+    if a.get("kind") == "DeclRefExpr":
+        ref = a.get("referencedDecl", {})
+        if ref.get("kind") in _VAR_DECL_KINDS:
+            return Var(ref["name"])
+    return extract_expr(a)
+
+
+def _cxx_decided_false(cond: dict, assume: dict[str, bool]) -> bool:
+    """The hypotheses decide a condition false: an assumed-false flag (a
+    parameter or a captured local), or `&&` with such an operand."""
+    cond = _unwrap_casts(cond)
+    if cond.get("kind") == "DeclRefExpr":
+        # Flag names are matched case-insensitively: the manifest spells them
+        # once for both sides, and Fortran has no case.
+        return assume.get(str(cond.get("referencedDecl", {}).get("name")).lower()) is False
+    if cond.get("kind") == "ParenExpr":
+        return _cxx_decided_false(_only(cond, "ParenExpr"), assume)
+    if cond.get("kind") == "BinaryOperator" and cond.get("opcode") == "&&":
+        return any(_cxx_decided_false(c, assume) for c in _inner(cond))
+    return False
+
+
+def _extract_for(n: dict, locals_out: list[Param], column: "_ColumnCtx") -> Do:
+    """``for (int k = lo; k <= hi; ++k) body`` over captured integer bounds →
+    a plain ``Do`` the column pass turns into a fold or a map. The exact
+    shape — an int declared from a captured const, `<=` against a captured
+    const, prefix or postfix `++` — is required; anything else refuses."""
+    kids = _inner(n)
+    if len(kids) != 4:
+        raise UnsupportedConstruct(f"for statement with {len(kids)} parts (init, cond, inc, body expected)")
+    init, cond, inc, body = kids
+    if init.get("kind") != "DeclStmt" or len(_inner(init)) != 1:
+        raise UnsupportedConstruct("for loop without a single declared loop variable")
+    vd = _inner(init)[0]
+    if vd.get("type", {}).get("qualType") != "int" or vd.get("init") != "c":
+        raise UnsupportedConstruct("for loop variable must be an int initialized by copy")
+    k = vd["name"]
+    lo = _extract_index(_only(vd, "VarDecl"))
+    if cond.get("kind") != "BinaryOperator" or cond.get("opcode") != "<=":
+        raise UnsupportedConstruct("for loop condition must be `k <= hi`")
+    lhs, rhs = _inner(cond)
+    if _extract_index(lhs) != Var(k):
+        raise UnsupportedConstruct("for loop condition must test the loop variable")
+    hi = _extract_index(rhs)
+    if inc.get("kind") != "UnaryOperator" or inc.get("opcode") != "++":
+        raise UnsupportedConstruct("for loop increment must be `++k`")
+    if not (isinstance(lo, Var) and isinstance(hi, Var)):
+        raise UnsupportedConstruct("for loop bounds must be captured variables")
+    column.bounds.update({lo.name, hi.name})
+    column.loop_vars.add(k)
+    stmts = tuple(_extract_stmts(body, locals_out, column=column))
+    return Do((k, lo, hi), stmts)
+
+
+class _ColumnCtx:
+    def __init__(self, assume: dict[str, bool]):
+        self.assume = assume
+        self.bounds: set[str] = set()
+        self.loop_vars: set[str] = set()
+
+
 def _extract_if(n: dict, locals_out: list[Param], *,
-                result: Optional[str] = None, tail: bool = False) -> If:
+                result: Optional[str] = None, tail: bool = False,
+                column: Optional[_ColumnCtx] = None) -> If:
     if n.get("hasInit") or n.get("hasVar") or n.get("isConstexpr"):
         raise UnsupportedConstruct(
             "if with an init-statement / condition variable / constexpr")
@@ -372,9 +535,10 @@ def _extract_if(n: dict, locals_out: list[Param], *,
         raise UnsupportedConstruct(f"if statement with {len(kids)} children")
     cond = extract_expr(kids[0])
     # Branches inherit the if's tail position.
-    then = tuple(_extract_stmts(kids[1], locals_out, result=result, tail=tail))
+    then = tuple(_extract_stmts(kids[1], locals_out, result=result, tail=tail,
+                                column=column))
     orelse = tuple(_extract_stmts(kids[2], locals_out, result=result,
-                                  tail=tail)) if has_else else ()
+                                  tail=tail, column=column)) if has_else else ()
     # `else if` arrives as an IfStmt in the else slot and stays nested here;
     # functionalize produces the same IfExpr chain as flang's elseif branches.
     return If(((cond, then),), orelse)
@@ -468,6 +632,100 @@ def extract_kernel_from_decl(decl: dict) -> Kernel:
     return Kernel(name, tuple(params), tuple(locals_), body)
 
 
+# Function parameter types admitted in column mode, beyond the point-kernel
+# scalars: AMReX arrays (per-cell or per-column, decided by how the lambda
+# indexes them), const struct references (member reads become inputs), a
+# `const Box &` (bounds only), and raw pointers (must go unreferenced).
+def _extract_column_param(pd: dict) -> Param:
+    name = pd.get("name")
+    qual = pd.get("type", {}).get("qualType", "")
+    if qual.startswith("const Array4<const Real> &") or qual.startswith("const Array4<const double> &"):
+        return Param(name, "real", "in", 3)
+    if qual.startswith("const Array4<Real> &") or qual.startswith("const Array4<double> &"):
+        return Param(name, "real", "inout", 3)
+    if qual in ("Real", "const Real", "double", "const double"):
+        return Param(name, "real", "in", 0)
+    if qual in ("bool", "const bool"):
+        return Param(name, "logical", "in", 0)
+    if qual == "const Box &":
+        return Param(name, "box", "in", 0)
+    if qual.startswith("const ") and qual.endswith(" &"):
+        return Param(name, "derived:" + qual[len("const "):-2].strip(), "in", 0)
+    if qual.endswith("*"):
+        return Param(name, "pointer:" + qual[:-1].strip(), "in", 0)
+    raise UnsupportedConstruct(
+        f"parameter '{name}': type '{qual}' is not an admitted column-kernel "
+        f"parameter (Array4, Real, bool, const struct &, const Box &, pointer)")
+
+
+def _lambdas(n: dict, acc: list[dict]) -> None:
+    if n.get("kind") == "LambdaExpr":
+        acc.append(n)
+        return                     # nested lambdas are not separately addressable
+    for c in _inner(n):
+        _lambdas(c, acc)
+
+
+def extract_column_kernel_from_decl(decl: dict, parallel_for: int,
+                                    columns: Sequence[str],
+                                    assume: dict[str, bool]) -> Kernel:
+    """Column mode: the body of the lambda passed to the ``parallel_for``-th
+    `ParallelFor` call (1-based, source order) in ``decl``, with the lambda's
+    named parameters as the column indices (they must spell ``columns``), the
+    function's parameters as the kernel's parameters, `for k` loops kept as
+    ``Do`` for :func:`groundline.column.columnize`, and blocks guarded by an
+    assumed-false flag pruned before modeling. Statements of the function
+    outside the lambda are not modeled: a captured function-scope local may
+    only be a loop bound or an assumed flag."""
+    name = decl.get("name")
+    params = [_extract_column_param(c) for c in _inner(decl) if c.get("kind") == "ParmVarDecl"]
+    body_node = next((c for c in _inner(decl) if c.get("kind") == "CompoundStmt"), None)
+    if body_node is None:
+        raise UnsupportedConstruct(f"{name}: no function body")
+    lams: list[dict] = []
+    _lambdas(body_node, lams)
+    if not 1 <= parallel_for <= len(lams):
+        raise UnsupportedConstruct(
+            f"{name}: ParallelFor lambda {parallel_for} requested, but the function "
+            f"has {len(lams)} lambda(s)")
+    lam = lams[parallel_for - 1]
+    rec = next((c for c in _inner(lam) if c.get("kind") == "CXXRecordDecl"), None)
+    op = next((c for c in _inner(rec) if c.get("kind") == "CXXMethodDecl"
+               and c.get("name") == "operator()"), None) if rec else None
+    if op is None:
+        raise UnsupportedConstruct(f"{name}: lambda without an operator()")
+    idx_names = [p.get("name") for p in _inner(op) if p.get("kind") == "ParmVarDecl"
+                 and p.get("type", {}).get("qualType") == "int"]
+    named = tuple(n for n in idx_names if n)
+    if named != tuple(columns):
+        raise UnsupportedConstruct(
+            f"{name}: the lambda's index parameters {named} do not spell the "
+            f"declared columns {tuple(columns)}")
+    lbody = next((c for c in _inner(lam) if c.get("kind") == "CompoundStmt"), None)
+    if lbody is None:
+        raise UnsupportedConstruct(f"{name}: lambda without a body")
+    ctx = _ColumnCtx(assume)
+    locals_: list[Param] = []
+    stmts = tuple(_extract_stmts(lbody, locals_, column=ctx))
+    # Captured function-scope locals: only loop bounds may be referenced.
+    from groundline.kir import _names_in_stmt
+    used: set[str] = set()
+    for s in stmts:
+        _names_in_stmt(s, used)
+    known = {p.name for p in params} | {l.name for l in locals_} | set(named) \
+        | ctx.loop_vars | ctx.bounds
+    unknown = sorted(used - known)
+    if unknown:
+        raise UnsupportedConstruct(
+            f"{name}: the lambda references {unknown}, which are neither "
+            f"parameters, lambda-body locals, column indices, loop variables, "
+            f"nor loop bounds")
+    # Loop variables and column indices are integer locals of the raw kernel
+    # (the column pass consumes them); bounds are dropped.
+    locals_ += [Param(k, "integer", None, 0) for k in sorted(ctx.loop_vars | set(named))]
+    return Kernel(name, tuple(params), tuple(locals_), stmts)
+
+
 def extract_kernel(source: Path, function: str, *, clang: str = "clang++",
                    include_dirs: Sequence[str] = ()) -> Kernel:
     """Extract ``function`` from the C++ ``source`` (header or TU) via clang."""
@@ -488,5 +746,11 @@ class ClangKernelFrontend:
     importable for tests that pin it directly."""
 
     def extract(self, spec: CppKernelSpec) -> Kernel:
+        if spec.parallel_for is not None:
+            text = dump_function_json(spec.source, spec.function, clang=spec.compiler,
+                                      include_dirs=spec.include_dirs)
+            decl = find_function(parse_ast_objects(text), spec.function)
+            return extract_column_kernel_from_decl(
+                decl, spec.parallel_for, spec.columns, dict(spec.assume))
         return extract_kernel(spec.source, spec.function, clang=spec.compiler,
                               include_dirs=spec.include_dirs)

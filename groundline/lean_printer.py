@@ -12,14 +12,20 @@ enough to audit line by line against ``kir.py``.
 from __future__ import annotations
 
 from groundline.kir import (
-    ArrayRef, BinOp, Call, Cmp, ComponentRef, Cond, Expr, FunExpr, IfExpr,
-    IntLit, Kernel, Let, Neg, Param, Paren, RealLit, Tuple_,
+    App, ArrayRef, BinOp, Call, Cmp, ComponentRef, Cond, Expr, Foldl, FunExpr,
+    IfExpr, IntLit, Kernel, Lam, Let, Neg, Param, Paren, Proj, RealLit, Tuple_,
     UnsupportedConstruct, Var, functionalize,
 )
 
 # Lean types of the modeled parameter types: reals are ℝ (VISION D6);
 # logical/bool inputs are Bool (a runtime truth value, decidable in `if`).
-_LEAN_TYPE = {"real": "ℝ", "logical": "Bool"}
+_LEAN_TYPE = {"real": "ℝ", "logical": "Bool", "real[k]": "κ → ℝ"}
+
+# Precedence of an argument position: function application binds tightest, so
+# an argument that is itself an application, an operator expression or a
+# conditional must be parenthesized.
+_ARG = 4
+_INTRINSICS = ("abs", "min", "max")
 
 # Operator spelling and precedence (higher binds tighter). Lean and Fortran
 # agree on these levels for the supported subset.
@@ -97,10 +103,31 @@ def print_expr(e: Expr, parent_prec: int = 0, right: bool = False) -> str:
         if e.name == "abs" and len(e.args) == 1:
             return f"|{print_expr(e.args[0])}|"
         if e.name in ("min", "max"):
-            args = ", ".join(print_expr(a) for a in e.args)
-            return f"{e.name} {args}" if len(e.args) != 2 else \
-                f"{e.name} ({print_expr(e.args[0])}) ({print_expr(e.args[1])})"
-        raise UnsupportedConstruct(f"cannot print call to '{e.name}'")
+            if len(e.args) != 2:
+                raise UnsupportedConstruct(f"cannot print {e.name} with {len(e.args)} arguments")
+            s = f"{e.name} ({print_expr(e.args[0])}) ({print_expr(e.args[1])})"
+            return f"({s})" if parent_prec >= _ARG else s
+        # A banked primitive, applied to its arguments (the column pass resolves
+        # calls; an unbanked callee never reaches the printer).
+        s = " ".join([e.name] + [print_expr(a, _ARG) for a in e.args])
+        return f"({s})" if parent_prec >= _ARG else s
+    if isinstance(e, App):
+        s = f"{e.name} {e.index}"
+        return f"({s})" if parent_prec >= _ARG else s
+    if isinstance(e, Proj):
+        return f"({print_expr(e.inner)}).{e.idx}"
+    if isinstance(e, Lam):
+        s = f"fun {e.index} => {print_expr(e.body)}"
+        return f"({s})" if parent_prec > 0 else s
+    if isinstance(e, Foldl):
+        # Single-line form only (a bare step); multi-line steps are printed by
+        # _print_fun when the fold is the value of a `let`.
+        if not isinstance(e.step, Tuple_) or len(e.step.elems) != 1:
+            raise UnsupportedConstruct(
+                "a fold with a multi-line step must be bound by a let")
+        s = (f"ks.foldl (fun {e.state} {e.index} => {print_expr(e.step.elems[0])}) "
+             f"{print_expr(e.init, _ARG)}")
+        return f"({s})" if parent_prec > 0 else s
     if isinstance(e, Cond):
         # Inline conditional from a merged control-flow join. `if then else`
         # sits below every operator in Lean, so any operand position
@@ -124,7 +151,15 @@ def print_expr(e: Expr, parent_prec: int = 0, right: bool = False) -> str:
 def _print_fun(fe: FunExpr, indent: int) -> list[str]:
     ind = "  " * indent
     if isinstance(fe, Let):
-        return [f"{ind}let {fe.name} := {print_expr(fe.value)}"] + \
+        v = fe.value
+        if isinstance(v, Foldl) and not (isinstance(v.step, Tuple_) and len(v.step.elems) == 1):
+            # Multi-line fold step: the lambda body on its own lines, the
+            # closing paren and the initial state after the last of them.
+            head = f"{ind}let {fe.name} := ks.foldl (fun {v.state} {v.index} =>"
+            step = _print_fun(v.step, indent + 2)
+            step[-1] = f"{step[-1]}) {print_expr(v.init, _ARG)}"
+            return [head] + step + _print_fun(fe.body, indent)
+        return [f"{ind}let {fe.name} := {print_expr(v)}"] + \
             _print_fun(fe.body, indent)
     if isinstance(fe, Tuple_):
         return [f"{ind}{_tuple_text(fe)}"]
@@ -162,7 +197,8 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
     """
     params, outputs, body = functionalize(kernel)
     out_set = set(outputs)
-    non_real_out = [p.name for p in params if p.name in out_set and p.type != "real"]
+    non_real_out = [p.name for p in params
+                    if p.name in out_set and p.type not in ("real", "real[k]")]
     if non_real_out:
         raise UnsupportedConstruct(
             f"{kernel.name}: non-real output(s) {non_real_out} — the model "
@@ -172,11 +208,13 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
         raise UnsupportedConstruct(
             f"{kernel.name}: non-real, non-logical parameters survived "
             f"pointization: {unknown}")
+    if not kernel.column and any(p.type == "real[k]" for p in params):
+        raise UnsupportedConstruct(f"{kernel.name}: per-k arrays outside a column kernel")
     # Locals must be real: an integer local would be modeled as a real (hiding
     # the source's truncating integer arithmetic — a wrong model, not a coarse
     # one), and a logical local has no ℝ meaning at all. Loop indices never
     # get this far; pointize drops them.
-    non_real_locals = [p.name for p in kernel.locals if p.type != "real"]
+    non_real_locals = [p.name for p in kernel.locals if p.type not in ("real", "real[k]")]
     if non_real_locals:
         raise UnsupportedConstruct(
             f"{kernel.name}: non-real local(s) {non_real_locals} — only real "
@@ -200,7 +238,13 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
         else:
             groups.append((ty, [p.name]))
     binders = " ".join(f"({' '.join(names)} : {ty})" for ty, names in groups)
-    ret = " × ".join("ℝ" for _ in outputs)
+    if kernel.column:
+        # A column kernel abstracts the vertical index type and binds its
+        # enumeration in loop order: `{κ : Type*} (ks : List κ)`.
+        binders = "{κ : Type*} (ks : List κ) " + binders
+    out_type = {p.name: _LEAN_TYPE[p.type] for p in params}
+    ret = " × ".join(f"({out_type[o]})" if "→" in out_type[o] else out_type[o]
+                     for o in outputs)
     results = [p.name for p in params if p.intent == "result"]
     if results:
         what = (f"Result `{results[0]}` — the function result, modeled "

@@ -65,6 +65,7 @@ made; a malformed manifest raises :class:`ManifestError` (refuse, don't guess).
 from __future__ import annotations
 
 import os
+import functools
 import re
 import tomllib
 from dataclasses import dataclass
@@ -76,7 +77,9 @@ from groundline.frontend.flang_kernel import (
     DUMP_FLAGS, FlangKernelFrontend, flang_version,
 )
 from groundline.frontend.kernel_base import CppKernelSpec, FortranKernelSpec
-from groundline.kir import Kernel, UnsupportedConstruct, is_loop_nest, pointize
+from groundline.kir import (Kernel, Param, UnsupportedConstruct, is_loop_nest,
+                            pointize, reads_before_write)
+from groundline.column import Callee, columnize
 from groundline.lean_printer import print_module
 
 MANIFEST_ENV = "GROUNDLINE_KERNELS"
@@ -124,6 +127,13 @@ class KernelEntry:
     fortran_label: str = ""
     cpp_label: str = ""
     pointize: bool = False
+
+    @property
+    def column(self) -> bool:
+        """A column kernel (docs/COLUMN_KERNELS.md): either side declares
+        column indices."""
+        return bool((self.fortran and self.fortran.columns)
+                    or (self.cpp and self.cpp.parallel_for is not None))
 
 
 @dataclass(frozen=True)
@@ -276,9 +286,28 @@ def _load_kernel(tbl: dict, ordinal: int, fortran: Optional[FortranConfig],
                  cpp: Optional[CppConfig], name: str) -> KernelEntry:
     ctx = f"{name} [[kernel]] #{ordinal}"
     _check_keys(tbl, {"name": str, "fortran": dict, "cpp": dict,
-                      "pointize": bool}, {"name"}, ctx)
+                      "pointize": bool, "columns": list, "assume": dict,
+                      "ignore_calls": list}, {"name"}, ctx)
     kname = tbl["name"]
     ctx = f"{name} kernel '{kname}'"
+    # Column-kernel options (docs/COLUMN_KERNELS.md). `columns` names the
+    # Fortran column indices; `assume` declares the hypotheses (flag → bool)
+    # under which guarded blocks are pruned; `ignore_calls` the procedure
+    # calls dropped as effect-free (timers). All three are stamped into the
+    # generated doc comment — a specialization is only honest when loud.
+    columns = tuple(tbl.get("columns", []))
+    if not all(isinstance(c, str) for c in columns):
+        raise ManifestError(f"{ctx}: columns must be a list of index names")
+    assume_tbl = tbl.get("assume", {})
+    if not all(isinstance(v, bool) for v in assume_tbl.values()):
+        raise ManifestError(f"{ctx}: assume values must be booleans")
+    assume = tuple(sorted((str(k).lower(), v) for k, v in assume_tbl.items()))
+    ignore_calls = tuple(str(c).lower() for c in tbl.get("ignore_calls", []))
+    if (assume or ignore_calls) and not columns and "cpp" not in tbl:
+        raise ManifestError(f"{ctx}: assume/ignore_calls are column-kernel options")
+    if columns and tbl.get("pointize"):
+        raise ManifestError(f"{ctx}: columns and pointize are exclusive — the column "
+                            f"indices are the license")
 
     fspec, flabel = None, ""
     if "fortran" in tbl:
@@ -317,10 +346,18 @@ def _load_kernel(tbl: dict, ordinal: int, fortran: Optional[FortranConfig],
                     f"{ctx}: a whole-subroutine kernel is named after its "
                     f"subroutine — rename the entry to "
                     f"'{ftbl['subroutine']}' or address a loop nest")
+        if columns and nest is not None:
+            raise ManifestError(f"{ctx}: columns and nest are exclusive")
+        if columns and ftbl["subroutine"] != kname:
+            raise ManifestError(
+                f"{ctx}: a column kernel is named after its subroutine — "
+                f"rename the entry to '{ftbl['subroutine']}'")
         fspec = FortranKernelSpec(
             subroutine=ftbl["subroutine"], dump=dump, source=src,
             compiler=fortran.compiler, nest=nest,
-            def_name=(def_name or kname) if nest is not None else None)
+            def_name=(def_name or kname) if nest is not None else None,
+            columns=tuple(c.lower() for c in columns), assume=assume,
+            ignore_calls=ignore_calls)
 
     cspec, clabel = None, ""
     if "cpp" in tbl:
@@ -328,8 +365,18 @@ def _load_kernel(tbl: dict, ordinal: int, fortran: Optional[FortranConfig],
             raise ManifestError(f"{ctx}: has a cpp side but the manifest has "
                                 f"no [cpp] section")
         ctbl = tbl["cpp"]
-        _check_keys(ctbl, {"source": str, "function": str},
-                    {"source", "function"}, f"{ctx} cpp")
+        _check_keys(ctbl, {"source": str, "function": str, "parallel_for": int,
+                           "columns": list}, {"source", "function"}, f"{ctx} cpp")
+        pfor = ctbl.get("parallel_for")
+        ccols = tuple(ctbl.get("columns", []))
+        if (pfor is None) != (not ccols):
+            raise ManifestError(
+                f"{ctx} cpp: parallel_for (the ParallelFor lambda's ordinal) and "
+                f"columns (its index parameters) go together")
+        if pfor is not None and not columns:
+            raise ManifestError(
+                f"{ctx}: a cpp parallel_for entry needs the Fortran-side columns "
+                f"too (or is Fortran-less; then give columns anyway)") if "fortran" in tbl else None
         raw = _expand(ctbl["source"], f"{ctx} cpp")
         source = _path(raw, cpp.sources, f"{ctx} cpp")
         clabel = raw
@@ -341,7 +388,8 @@ def _load_kernel(tbl: dict, ordinal: int, fortran: Optional[FortranConfig],
                 clabel = str(source)
         cspec = CppKernelSpec(source=source, function=ctbl["function"],
                               include_dirs=cpp.include_dirs,
-                              compiler=cpp.compiler)
+                              compiler=cpp.compiler, parallel_for=pfor,
+                              columns=ccols, assume=assume)
 
     if fspec is None and cspec is None:
         raise ManifestError(f"{ctx}: needs a fortran and/or cpp side")
@@ -354,8 +402,24 @@ def _load_kernel(tbl: dict, ordinal: int, fortran: Optional[FortranConfig],
 # Extraction + rendering (what generate/show/verify share)
 # --------------------------------------------------------------------------- #
 
+def _hypotheses(assume, ignore_calls=()) -> str:
+    parts = []
+    if assume:
+        parts.append("specialized under the hypothesis " + ", ".join(
+            f"`{k} = {'true' if v else 'false'}`" for k, v in assume)
+                     + " (guarded blocks pruned)")
+    if ignore_calls:
+        parts.append("calls to " + ", ".join(f"`{c}`" for c in ignore_calls)
+                     + " dropped as declared effect-free")
+    return ("; " + "; ".join(parts)) if parts else ""
+
+
 def fortran_provenance(entry: KernelEntry) -> str:
     spec = entry.fortran
+    if spec.columns:
+        return (f"`{spec.subroutine}` in `{entry.fortran_label}` (flang with-sema "
+                f"dump), as a column kernel over ({', '.join(spec.columns)})"
+                + _hypotheses(spec.assume, spec.ignore_calls))
     if spec.nest is None:
         return (f"`{spec.subroutine}` in `{entry.fortran_label}` "
                 f"(flang with-sema dump)")
@@ -364,17 +428,85 @@ def fortran_provenance(entry: KernelEntry) -> str:
 
 
 def cpp_provenance(entry: KernelEntry) -> str:
+    spec = entry.cpp
+    if spec.parallel_for is not None:
+        return (f"ParallelFor lambda {spec.parallel_for} of `{spec.function}` in "
+                f"`{entry.cpp_label}` (clang JSON AST), as a column kernel over "
+                f"({', '.join(spec.columns)})" + _hypotheses(spec.assume))
     return (f"`{entry.cpp.function}` in `{entry.cpp_label}` "
             f"(clang JSON AST)")
 
 
-def extract_fortran_entry(entry: KernelEntry) -> Kernel:
+@functools.lru_cache(maxsize=32)
+def _fortran_root(dump: str):
+    """Parsed dump trees, cached per path — the callee registry and the
+    entries of one manifest read the same production dump many times."""
+    from groundline.frontend.flang_kernel import parse_dump_lines
+    with open(dump) as f:
+        return parse_dump_lines(f)
+
+
+def _root_for(spec: FortranKernelSpec):
+    if spec.dump is not None:
+        return _fortran_root(str(spec.dump))
+    return FlangKernelFrontend().root(spec)
+
+
+def fortran_callees(m: Optional[Manifest]) -> dict[str, Callee]:
+    """The banked Fortran primitives a column kernel may call: every
+    whole-procedure entry of the manifest (no nest, no columns), keyed by
+    procedure name — its generated def's name, full dummy list, and kept
+    parameters."""
+    if m is None:
+        return {}
+    from groundline.frontend.flang_kernel import procedure_dummies
+    out: dict[str, Callee] = {}
+    for e in fortran_entries(m):
+        spec = e.fortran
+        if spec.nest is not None or spec.columns:
+            continue
+        root = _root_for(spec)
+        k = extract_fortran_entry(e, m)
+        out[spec.subroutine] = Callee(e.name, procedure_dummies(root, spec.subroutine),
+                                      k.params)
+    return out
+
+
+def cpp_callees(m: Optional[Manifest]) -> dict[str, Callee]:
+    """The banked C++ point primitives (entries without a ParallelFor
+    address), keyed by function name; a result pseudo-parameter is not a
+    dummy."""
+    if m is None:
+        return {}
+    out: dict[str, Callee] = {}
+    for e in cpp_entries(m):
+        if e.cpp.parallel_for is not None:
+            continue
+        k = extract_cpp_entry(e, m)
+        # C++ spells every output `Real &`, which the frontend maps to inout; a
+        # parameter the callee never reads before assigning is an output in
+        # Fortran's sense, and a caller may pass it an uninitialized receiver.
+        params = tuple(
+            Param(p.name, p.type, "out", p.rank)
+            if p.intent == "inout" and not reads_before_write(p.name, k.body) else p
+            for p in k.params if p.intent != "result")
+        out[e.cpp.function] = Callee(e.cpp.function, tuple(p.name for p in params), params)
+    return out
+
+
+def extract_fortran_entry(entry: KernelEntry, m: Optional[Manifest] = None) -> Kernel:
     """Extract one entry's Fortran side. A kernel that is already per-point
     (scalar arguments, no loop) passes through as written. A loop nest is a
     different thing from a point function, so it refuses unless the entry
     carries ``pointize = true`` — the explicit license to reduce the loop to
-    its per-point body via :func:`~groundline.kir.pointize`."""
-    k = FlangKernelFrontend().extract(entry.fortran)
+    its per-point body via :func:`~groundline.kir.pointize`. A column kernel
+    (``columns`` given) is reduced by :func:`~groundline.column.columnize`,
+    resolving its calls against the manifest's banked primitives (``m``)."""
+    spec = entry.fortran
+    if spec.columns:
+        raw = FlangKernelFrontend().extract_from_root(_root_for(spec), spec)
+        return columnize(raw, spec.columns, fortran_callees(m))
+    k = FlangKernelFrontend().extract_from_root(_root_for(spec), spec)
     if is_loop_nest(k):
         if not entry.pointize:
             raise UnsupportedConstruct(
@@ -390,10 +522,16 @@ def extract_fortran_entry(entry: KernelEntry) -> Kernel:
     return k
 
 
-def extract_cpp_entry(entry: KernelEntry) -> Kernel:
-    """Extract one entry's C++ side (point functions extract as written; no
-    pointize on this side — the clang frontend has no loop support yet)."""
-    return ClangKernelFrontend().extract(entry.cpp)
+def extract_cpp_entry(entry: KernelEntry, m: Optional[Manifest] = None) -> Kernel:
+    """Extract one entry's C++ side: a point function as written, or — with a
+    ParallelFor address — the lambda body reduced by
+    :func:`~groundline.column.columnize`, its calls resolved against the
+    manifest's banked C++ primitives (``m``)."""
+    spec = entry.cpp
+    if spec.parallel_for is not None:
+        raw = ClangKernelFrontend().extract(spec)
+        return columnize(raw, spec.columns, cpp_callees(m), columns_bound=True)
+    return ClangKernelFrontend().extract(spec)
 
 
 def fortran_entries(m: Manifest) -> list[KernelEntry]:
@@ -405,12 +543,12 @@ def cpp_entries(m: Manifest) -> list[KernelEntry]:
 
 
 def extract_all_fortran(m: Manifest) -> list[tuple[Kernel, str]]:
-    return [(extract_fortran_entry(e), fortran_provenance(e))
+    return [(extract_fortran_entry(e, m), fortran_provenance(e))
             for e in fortran_entries(m)]
 
 
 def extract_all_cpp(m: Manifest) -> list[tuple[Kernel, str]]:
-    return [(extract_cpp_entry(e), cpp_provenance(e)) for e in cpp_entries(m)]
+    return [(extract_cpp_entry(e, m), cpp_provenance(e)) for e in cpp_entries(m)]
 
 
 def _regen_line(m: Manifest) -> str:
