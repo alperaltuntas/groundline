@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from groundline.kir import (
-    Assign, BinOp, ComponentRef, Do, DoConcurrent, If, IntLit, Kernel, Param,
-    RealLit, Tuple_, UnsupportedConstruct, Var, ArrayRef, functionalize,
+    Assign, BinOp, Cmp, ComponentRef, Do, DoConcurrent, If, IntLit, Kernel,
+    Param, RealLit, Tuple_, UnsupportedConstruct, Var, ArrayRef, functionalize,
     pointize,
 )
 from groundline.frontend.flang_kernel import extract_kernel, extract_loop_kernel
@@ -192,6 +192,62 @@ class TestIntegerArithmeticRefusals:
             print_expr(BinOp("pow", IntLit("2"), IntLit("3")))
         assert print_expr(BinOp("div", Var("w"), IntLit("2"))) == "w / 2"
         assert print_expr(BinOp("pow", Var("w"), IntLit("2"))) == "w ^ 2"
+
+
+class TestFunctionResultFixture:
+    """A Fortran FUNCTION as a kernel: its `result(name)` variable is the
+    single output — appended as a parameter of intent 'result', absent from
+    the printed def's binder list (the caller supplies no value for it).
+    Distilled from
+    MOM_continuity_PPM's `ratio_max`; the sibling functions pin the refusals
+    at each stage (heading, declarations, functionalize)."""
+
+    ptree = F90_DIR / "test_kernel_function_ptree"
+
+    def test_extraction_shape(self):
+        k = extract_kernel(self.ptree, "capped_ratio")
+        assert [(p.name, p.intent) for p in k.params] == \
+            [("a", "in"), ("b", "in"), ("maxrat", "in"), ("ratio", "result")]
+        assert [p.name for p in k.locals] == ["q"]
+
+    def test_printed_lean(self):
+        expected = """\
+def capped_ratio (a b maxrat : ℝ) : ℝ :=
+  let q := maxrat * b
+  if |a| > |q| then
+    maxrat
+  else a / b
+"""
+        assert print_kernel(extract_kernel(self.ptree, "capped_ratio")) == expected
+
+    def test_doc_comment_names_the_result(self):
+        text = print_kernel(extract_kernel(self.ptree, "capped_ratio"),
+                            provenance="p")
+        assert "Result `ratio` — the function result" in text
+
+    def test_no_result_clause_refused(self):
+        with pytest.raises(UnsupportedConstruct, match=r"no result\(name\) clause"):
+            extract_kernel(self.ptree, "plain_result")
+
+    def test_type_prefix_refused(self):
+        # `real(8) function f(a) result(r)`: the result's type lives in the
+        # prefix, not the specification part — refused, never dropped.
+        with pytest.raises(UnsupportedConstruct,
+                           match="prefix 'DeclarationTypeSpec'"):
+            extract_kernel(self.ptree, "typed_prefix")
+
+    def test_result_unassigned_on_a_path_refused(self):
+        with pytest.raises(UnsupportedConstruct,
+                           match="not assigned on every control-flow path"):
+            print_kernel(extract_kernel(self.ptree, "partial_result"))
+
+    def test_result_read_before_assignment_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="read before it is assigned"):
+            print_kernel(extract_kernel(self.ptree, "reads_result"))
+
+    def test_mutated_dummy_alongside_result_refused(self):
+        with pytest.raises(UnsupportedConstruct, match="two output conventions"):
+            extract_kernel(self.ptree, "mixed_outputs")
 
 
 class TestInlineNestsFixture:
@@ -403,6 +459,36 @@ class TestJoinRefusals:
         stmt = If(((Var("q"), (assign_b,)), (Var("q"), (assign_b,))), ())
         with pytest.raises(UnsupportedConstruct, match="elseif"):
             print_kernel(pointize(self._kernel(stmt)))
+
+
+class TestFunctionResultRefusals:
+    """Pass-level gates of the result convention, on hand-built kernels: a
+    result is the SOLE output, starts unbound, and must be defined on every
+    path that reaches the end (including both sides of a joined IF)."""
+
+    def test_result_alongside_inout_refused(self):
+        k = Kernel("k", (Param("a", "real", "in", 0), Param("x", "real", "inout", 0),
+                         Param("r", "real", "result", 0)), (),
+                   (Assign(Var("x"), Var("a")), Assign(Var("r"), Var("a"))))
+        with pytest.raises(UnsupportedConstruct, match="two output conventions"):
+            functionalize(k)
+
+    def test_result_assigned_on_one_side_of_a_join_refused(self):
+        # `if (c > 0) r = a` followed by `r = r + a`: the join would merge r
+        # with an undefined value on the other side.
+        k = Kernel("k", (Param("a", "real", "in", 0), Param("c", "real", "in", 0),
+                         Param("r", "real", "result", 0)), (),
+                   (If(((Cmp("gt", Var("c"), RealLit("0.0")),
+                         (Assign(Var("r"), Var("a")),)),), ()),
+                    Assign(Var("r"), BinOp("add", Var("r"), Var("a")))))
+        with pytest.raises(UnsupportedConstruct, match="only one branch of a joined IF"):
+            functionalize(k)
+
+    def test_result_kernel_without_inputs_refused_at_print(self):
+        k = Kernel("k", (Param("r", "real", "result", 0),), (),
+                   (Assign(Var("r"), RealLit("1.0")),))
+        with pytest.raises(UnsupportedConstruct, match="no input parameters"):
+            print_kernel(k)
 
 
 def test_sequential_alias_read_threads_current_value():

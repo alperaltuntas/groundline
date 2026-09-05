@@ -1,0 +1,262 @@
+======================== Flang: parse tree dump ========================
+Program -> ProgramUnit -> Module
+| ModuleStmt -> Name = 'test_kernel_function'
+| SpecificationPart
+| | ImplicitPart -> ImplicitPartStmt -> ImplicitStmt -> 
+| ModuleSubprogramPart
+| | ContainsStmt
+| | ModuleSubprogram -> FunctionSubprogram
+| | | FunctionStmt
+| | | | PrefixSpec -> Pure
+| | | | Name = 'capped_ratio'
+| | | | Name = 'a'
+| | | | Name = 'b'
+| | | | Name = 'maxrat'
+| | | | Suffix
+| | | | | Name = 'ratio'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'a'
+| | | | | EntityDecl
+| | | | | | Name = 'b'
+| | | | | EntityDecl
+| | | | | | Name = 'maxrat'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'ratio'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'q'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'q=maxrat*b'
+| | | | | Variable = 'q'
+| | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | Expr = 'maxrat*b'
+| | | | | | Multiply
+| | | | | | | Expr = 'maxrat'
+| | | | | | | | Designator -> DataRef -> Name = 'maxrat'
+| | | | | | | Expr = 'b'
+| | | | | | | | Designator -> DataRef -> Name = 'b'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> IfConstruct
+| | | | | IfThenStmt
+| | | | | | Scalar -> Logical -> Expr = 'abs(a)>abs(q)'
+| | | | | | | GT
+| | | | | | | | Expr = 'abs(a)'
+| | | | | | | | | FunctionReference -> Call
+| | | | | | | | | | ProcedureDesignator -> Name = 'abs'
+| | | | | | | | | | ActualArgSpec
+| | | | | | | | | | | ActualArg -> Expr = 'a'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | | | | | | Expr = 'abs(q)'
+| | | | | | | | | FunctionReference -> Call
+| | | | | | | | | | ProcedureDesignator -> Name = 'abs'
+| | | | | | | | | | ActualArgSpec
+| | | | | | | | | | | ActualArg -> Expr = 'q'
+| | | | | | | | | | | | Designator -> DataRef -> Name = 'q'
+| | | | | Block
+| | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'ratio=maxrat'
+| | | | | | | Variable = 'ratio'
+| | | | | | | | Designator -> DataRef -> Name = 'ratio'
+| | | | | | | Expr = 'maxrat'
+| | | | | | | | Designator -> DataRef -> Name = 'maxrat'
+| | | | | ElseBlock
+| | | | | | ElseStmt -> 
+| | | | | | Block
+| | | | | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'ratio=a/b'
+| | | | | | | | Variable = 'ratio'
+| | | | | | | | | Designator -> DataRef -> Name = 'ratio'
+| | | | | | | | Expr = 'a/b'
+| | | | | | | | | Divide
+| | | | | | | | | | Expr = 'a'
+| | | | | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | | | | | | | | Expr = 'b'
+| | | | | | | | | | | Designator -> DataRef -> Name = 'b'
+| | | | | EndIfStmt -> 
+| | | EndFunctionStmt -> Name = 'capped_ratio'
+| | ModuleSubprogram -> FunctionSubprogram
+| | | FunctionStmt
+| | | | Name = 'plain_result'
+| | | | Name = 'a'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'a'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'plain_result'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'plain_result=2._8*a'
+| | | | | Variable = 'plain_result'
+| | | | | | Designator -> DataRef -> Name = 'plain_result'
+| | | | | Expr = '2._8*a'
+| | | | | | Multiply
+| | | | | | | Expr = '2._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '2.0'
+| | | | | | | Expr = 'a'
+| | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | EndFunctionStmt -> Name = 'plain_result'
+| | ModuleSubprogram -> FunctionSubprogram
+| | | FunctionStmt
+| | | | PrefixSpec -> DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | Name = 'typed_prefix'
+| | | | Name = 'a'
+| | | | Suffix
+| | | | | Name = 'r'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'a'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'r=2._8*a'
+| | | | | Variable = 'r'
+| | | | | | Designator -> DataRef -> Name = 'r'
+| | | | | Expr = '2._8*a'
+| | | | | | Multiply
+| | | | | | | Expr = '2._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '2.0'
+| | | | | | | Expr = 'a'
+| | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | EndFunctionStmt -> Name = 'typed_prefix'
+| | ModuleSubprogram -> FunctionSubprogram
+| | | FunctionStmt
+| | | | Name = 'partial_result'
+| | | | Name = 'a'
+| | | | Suffix
+| | | | | Name = 'r'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'a'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'r'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> IfStmt
+| | | | | Scalar -> Logical -> Expr = 'a>0._8'
+| | | | | | GT
+| | | | | | | Expr = 'a'
+| | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | | | | | Expr = '0._4'
+| | | | | | | | LiteralConstant -> RealLiteralConstant
+| | | | | | | | | Real = '0.0'
+| | | | | ActionStmt -> AssignmentStmt = 'r=a'
+| | | | | | Variable = 'r'
+| | | | | | | Designator -> DataRef -> Name = 'r'
+| | | | | | Expr = 'a'
+| | | | | | | Designator -> DataRef -> Name = 'a'
+| | | EndFunctionStmt -> Name = 'partial_result'
+| | ModuleSubprogram -> FunctionSubprogram
+| | | FunctionStmt
+| | | | Name = 'reads_result'
+| | | | Name = 'a'
+| | | | Suffix
+| | | | | Name = 'r'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'a'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'r'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'r=r+a'
+| | | | | Variable = 'r'
+| | | | | | Designator -> DataRef -> Name = 'r'
+| | | | | Expr = 'r+a'
+| | | | | | Add
+| | | | | | | Expr = 'r'
+| | | | | | | | Designator -> DataRef -> Name = 'r'
+| | | | | | | Expr = 'a'
+| | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | EndFunctionStmt -> Name = 'reads_result'
+| | ModuleSubprogram -> FunctionSubprogram
+| | | FunctionStmt
+| | | | Name = 'mixed_outputs'
+| | | | Name = 'a'
+| | | | Name = 'x'
+| | | | Suffix
+| | | | | Name = 'r'
+| | | SpecificationPart
+| | | | ImplicitPart -> 
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = In
+| | | | | EntityDecl
+| | | | | | Name = 'a'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | AttrSpec -> IntentSpec -> Intent = InOut
+| | | | | EntityDecl
+| | | | | | Name = 'x'
+| | | | DeclarationConstruct -> SpecificationConstruct -> TypeDeclarationStmt
+| | | | | DeclarationTypeSpec -> IntrinsicTypeSpec -> Real
+| | | | | | KindSelector -> Scalar -> Integer -> Constant -> Expr = '8_4'
+| | | | | | | LiteralConstant -> IntLiteralConstant = '8'
+| | | | | EntityDecl
+| | | | | | Name = 'r'
+| | | ExecutionPart -> Block
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'x=x+a'
+| | | | | Variable = 'x'
+| | | | | | Designator -> DataRef -> Name = 'x'
+| | | | | Expr = 'x+a'
+| | | | | | Add
+| | | | | | | Expr = 'x'
+| | | | | | | | Designator -> DataRef -> Name = 'x'
+| | | | | | | Expr = 'a'
+| | | | | | | | Designator -> DataRef -> Name = 'a'
+| | | | ExecutionPartConstruct -> ExecutableConstruct -> ActionStmt -> AssignmentStmt = 'r=a'
+| | | | | Variable = 'r'
+| | | | | | Designator -> DataRef -> Name = 'r'
+| | | | | Expr = 'a'
+| | | | | | Designator -> DataRef -> Name = 'a'
+| | | EndFunctionStmt -> Name = 'mixed_outputs'
+| EndModuleStmt -> Name = 'test_kernel_function'

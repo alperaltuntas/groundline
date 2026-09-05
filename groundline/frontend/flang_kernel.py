@@ -1,6 +1,8 @@
-"""Kernel-IR frontend: extract one subroutine — or one addressed loop nest of a
-subroutine (:func:`extract_loop_kernel`) — from a with-sema flang parse-tree
-dump into the kernel IR (``groundline/kir.py``). The dump is either
+"""Kernel-IR frontend: extract one subroutine or function — or one addressed
+loop nest of a subroutine (:func:`extract_loop_kernel`) — from a with-sema
+flang parse-tree dump into the kernel IR (``groundline/kir.py``). A function
+kernel's ``result(name)`` variable becomes its single output (a parameter of
+intent ``result``; see ``kir.functionalize``). The dump is either
 pre-generated (captured inside a real build, kept with provenance) or
 produced on demand by running flang on a standalone source file
 (:func:`dump_parse_tree`) — the mirror of how the clang frontend invokes
@@ -148,13 +150,30 @@ def parse_dump_lines(lines: Iterable[str]) -> Node:
     return root
 
 
-def find_subroutine(root: Node, name: str) -> Node:
-    """Locate the ``SubroutineSubprogram`` whose SubroutineStmt names ``name``."""
+# Procedure kinds the frontend extracts, and the statement node that heads each.
+_PROCEDURE_STMT = {"SubroutineSubprogram": "SubroutineStmt",
+                   "FunctionSubprogram": "FunctionStmt"}
+
+# Prefix keywords (dump: ``PrefixSpec -> <keyword>``) that constrain how a
+# procedure may be used or called — pure, elemental, recursive, … — without
+# changing what its body computes; the extractor may read past them. A
+# ``DeclarationTypeSpec`` prefix (``real function f(x)``) is NOT a keyword: it
+# declares the result's type outside the specification part, and dropping it
+# would lose that declaration — so it refuses.
+_PREFIX_KEYWORDS = {"Pure", "Elemental", "Impure", "Recursive", "Non_Recursive",
+                    "Module"}
+
+
+def find_procedure(root: Node, name: str) -> Node:
+    """Locate the ``SubroutineSubprogram`` or ``FunctionSubprogram`` whose
+    heading statement names ``name`` (its first ``Name`` child, after any
+    prefix)."""
     hits: list[Node] = []
 
     def walk(n: Node) -> None:
-        if n.name == "SubroutineSubprogram":
-            stmt = n.child("SubroutineStmt")
+        stmt_kind = _PROCEDURE_STMT.get(n.name)
+        if stmt_kind is not None:
+            stmt = n.child(stmt_kind)
             names = stmt.children_named("Name")
             if names and names[0].payload == name:
                 hits.append(n)
@@ -164,8 +183,61 @@ def find_subroutine(root: Node, name: str) -> Node:
 
     walk(root)
     if len(hits) != 1:
-        raise UnsupportedConstruct(f"subroutine '{name}': found {len(hits)} definitions")
+        raise UnsupportedConstruct(
+            f"subroutine or function '{name}': found {len(hits)} definitions")
     return hits[0]
+
+
+@dataclass(frozen=True)
+class _Signature:
+    """A procedure heading: its name, dummy-argument names in source order,
+    and — for a function — the result variable named by ``result(name)``."""
+    name: str
+    args: tuple[str, ...]
+    result: Optional[str]
+
+
+def _check_prefix(stmt: Node) -> None:
+    for ps in stmt.children_named("PrefixSpec"):
+        kid = ps.only_child()
+        if kid.name not in _PREFIX_KEYWORDS:
+            raise UnsupportedConstruct(
+                f"prefix '{kid.name}' on '{stmt.name}' (only the keyword "
+                f"prefixes {sorted(_PREFIX_KEYWORDS)} are understood — a type "
+                f"prefix would declare the function result outside the "
+                f"specification part)")
+
+
+def _signature(sub: Node) -> _Signature:
+    """Read a procedure's heading. A ``SubroutineStmt`` lists its dummies as
+    ``DummyArg -> Name`` children; a ``FunctionStmt`` lists them as bare
+    ``Name`` children after the function's own name, and names its result
+    variable under ``Suffix -> Name``. A function *without* a ``result``
+    clause — whose function name doubles as the result variable — refuses:
+    that is a different declaration story, unsupported until a kernel needs
+    it."""
+    if sub.name == "SubroutineSubprogram":
+        stmt = sub.child("SubroutineStmt")
+        _check_prefix(stmt)
+        name = stmt.children_named("Name")[0].payload
+        args = tuple(d.child("Name").payload for d in stmt.children_named("DummyArg"))
+        return _Signature(name, args, None)
+    stmt = sub.child("FunctionStmt")
+    _check_prefix(stmt)
+    names = [n.payload for n in stmt.children_named("Name")]
+    suffixes = stmt.children_named("Suffix")
+    if not suffixes:
+        raise UnsupportedConstruct(
+            f"function '{names[0]}' has no result(name) clause — the function "
+            f"name itself would be the result variable (unsupported)")
+    if len(suffixes) != 1:
+        raise UnsupportedConstruct(f"function '{names[0]}': several suffixes")
+    res = suffixes[0].only_child()
+    if res.name != "Name":
+        raise UnsupportedConstruct(
+            f"function '{names[0]}': suffix '{res.name}' (only result(name) "
+            f"is supported)")
+    return _Signature(names[0], tuple(names[1:]), res.payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,18 +500,35 @@ def extract_kernel(dump_path: Path, subroutine: str) -> Kernel:
 
 
 def _kernel_from_root(root: Node, subroutine: str) -> Kernel:
-    sub = find_subroutine(root, subroutine)
-    stmt = sub.child("SubroutineStmt")
-    arg_order = [d.child("Name").payload for d in stmt.children_named("DummyArg")]
+    sub = find_procedure(root, subroutine)
+    sig = _signature(sub)
     decls = _extract_decls(sub.child("SpecificationPart"))
     by_name = {d.name: d for d in decls}
-    missing = [a for a in arg_order if a not in by_name]
+    missing = [a for a in sig.args if a not in by_name]
     if missing:
         raise UnsupportedConstruct(f"{subroutine}: undeclared dummy args {missing}")
-    params = tuple(by_name[a] for a in arg_order)
-    locals_ = tuple(d for d in decls if d.name not in set(arg_order))
+    params = [by_name[a] for a in sig.args]
+    bound = set(sig.args)
+    if sig.result is not None:
+        # A function: its result variable is the single output. It is
+        # declared like a local (no intent) in the specification part and
+        # becomes a parameter of intent 'result' — appended after the dummies.
+        res = by_name.get(sig.result)
+        if res is None:
+            raise UnsupportedConstruct(
+                f"{subroutine}: result variable '{sig.result}' is not declared "
+                f"in the specification part")
+        mutated = [p.name for p in params if p.intent in ("inout", "out")]
+        if mutated:
+            raise UnsupportedConstruct(
+                f"{subroutine}: a function with intent(inout)/intent(out) "
+                f"dummy arguments {mutated} — two output conventions (a result "
+                f"and mutated arguments) in one procedure")
+        params.append(Param(res.name, res.type, "result", res.rank))
+        bound.add(sig.result)
+    locals_ = tuple(d for d in decls if d.name not in bound)
     body = extract_block(sub.child("ExecutionPart").child("Block"))
-    return Kernel(subroutine, params, locals_, body)
+    return Kernel(subroutine, tuple(params), locals_, body)
 
 
 # --------------------------------------------------------------------------- #
@@ -532,7 +621,7 @@ def extract_loop_kernel(dump_path: Path, subroutine: str, nest: int,
 
 def _loop_kernel_from_root(root: Node, subroutine: str, nest: int,
                            name: str) -> Kernel:
-    sub = find_subroutine(root, subroutine)
+    sub = find_procedure(root, subroutine)
     nests = _collect_do_nests(sub.child("ExecutionPart"))
     if not 1 <= nest <= len(nests):
         raise UnsupportedConstruct(
@@ -540,8 +629,7 @@ def _loop_kernel_from_root(root: Node, subroutine: str, nest: int,
             f"has {len(nests)} do-construct nest(s)")
     loop = _extract_do(nests[nest - 1])
 
-    stmt = sub.child("SubroutineStmt")
-    arg_order = [d.child("Name").payload for d in stmt.children_named("DummyArg")]
+    arg_order = _signature(sub).args
     decls, poisoned = _extract_decls_tolerant(sub.child("SpecificationPart"))
     by_name = {d.name: d for d in decls}
 

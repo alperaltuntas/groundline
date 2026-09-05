@@ -66,6 +66,19 @@ Passes:
   statements then run against the *merged* state, so a later read of a
   variable the ``If`` may have updated observes the conditional value —
   sequential semantics, as in the source. Any other join shape is refused.
+
+  A *function* kernel (Fortran ``function … result(r)``; a non-void C++ point
+  function) carries its result as a parameter of intent ``result``: the
+  single output. Unlike an ``inout``/``out`` argument, whose caller-supplied
+  value the body may read, **the caller supplies no value for the result
+  variable** — it starts undefined. The model therefore starts it unbound
+  rather than at ``Var(r)``, so a read before its first assignment refuses, a control-flow path that never assigns
+  it refuses (the source would return an undefined value there), and a
+  joined ``If`` assigning it on one side only refuses for the same reason. A
+  result alongside ``inout``/``out`` arguments (two output conventions in one
+  procedure) refuses. The frontends supply the parameter: flang from the
+  ``result(name)`` suffix, clang by naming the return value after the
+  function (Fortran's own default for a result variable).
 """
 
 from __future__ import annotations
@@ -212,7 +225,7 @@ Stmt = Union[Assign, If, DoConcurrent, Do]
 class Param:
     name: str
     type: str          # 'real' | 'integer' | 'derived:<name>'
-    intent: Optional[str]   # 'in' | 'inout' | 'out' | None (local)
+    intent: Optional[str]   # 'in' | 'inout' | 'out' | 'result' | None (local)
     rank: int          # 0 = scalar
 
 
@@ -437,25 +450,42 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
     """Translate the (pointized) imperative body into one functional expression.
 
     Returns ``(input_params, output_names, expr)`` where the outputs are the
-    ``inout``/``out`` parameters in declaration order; ``expr`` evaluates to
-    their tuple. Locals become ``Let`` bindings; an output's current value is
-    tracked symbolically, starting at its own input ``Var``.
+    ``inout``/``out`` parameters in declaration order — or the single
+    ``result`` parameter of a function kernel; ``expr`` evaluates to their
+    tuple. Locals become ``Let`` bindings; an ``inout``/``out`` output's
+    current value is tracked symbolically, starting at its own input ``Var``;
+    a ``result`` starts unbound (see the module docstring).
     """
-    outputs = tuple(p.name for p in kernel.params if p.intent in ("inout", "out"))
+    outputs = tuple(p.name for p in kernel.params
+                    if p.intent in ("inout", "out", "result"))
     if not outputs:
         raise UnsupportedConstruct(f"{kernel.name}: no inout/out parameters — nothing to return")
+    results = {p.name for p in kernel.params if p.intent == "result"}
+    if results and len(outputs) > 1:
+        raise UnsupportedConstruct(
+            f"{kernel.name}: a function result alongside other outputs "
+            f"{sorted(set(outputs) - results)} — two output conventions in "
+            f"one kernel")
     local_names = {p.name for p in kernel.locals}
+
+    def materialize(state: dict[str, Expr]) -> Tuple_:
+        missing = [o for o in outputs if o not in state]
+        if missing:
+            raise UnsupportedConstruct(
+                f"{kernel.name}: function result '{missing[0]}' is not "
+                f"assigned on every control-flow path")
+        return Tuple_(tuple(state[o] for o in outputs))
 
     def go(stmts: tuple[Stmt, ...], state: dict[str, Expr]) -> FunExpr:
         if not stmts:
-            return Tuple_(tuple(state[o] for o in outputs))
+            return materialize(state)
         head, rest = stmts[0], stmts[1:]
         if isinstance(head, Assign):
             name = head.target.name
             value = subst(head.value, state)
             if name in local_names:
                 return Let(name, value, go(rest, state))
-            if name in state:
+            if name in outputs:
                 return go(rest, {**state, name: value})
             raise UnsupportedConstruct(
                 f"{kernel.name}: assignment to '{name}', neither local nor output")
@@ -496,7 +526,7 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                         f"{kernel.name}: statements after an IF (control-flow join) "
                         f"require its branches to hold only assignments to output "
                         f"variables; found {type(s).__name__}")
-                if s.target.name not in state:
+                if s.target.name not in outputs:
                     raise UnsupportedConstruct(
                         f"{kernel.name}: assignment to non-output '{s.target.name}' "
                         f"inside a joined IF branch (a Let may not escape the branch)")
@@ -509,6 +539,12 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         cond_now = subst(cond, state)
         merged = dict(state)
         for v in asg_then | asg_else:
+            if v not in st_then or v not in st_else:
+                # Only a `result` can be missing from a side: inout/out
+                # outputs are in `state` from the start.
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: function result '{v}' is assigned in only "
+                    f"one branch of a joined IF — undefined on the other path")
             merged[v] = Cond(cond_now, st_then[v], st_else[v])
         return merged
 
@@ -520,9 +556,17 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         ``Var(name)`` the substitution is a no-op, and when it is any other
         expression — including a plain ``Var`` alias like ``b = a`` — the read
         must see it, or a later statement would silently read the *input*
-        value. Sequential threading is the whole contract here."""
+        value. Sequential threading is the whole contract here.
+
+        The caller supplies no value for a function result (unlike an
+        inout/out argument), so reading it before its first assignment reads
+        an undefined value in the source — refused here."""
         if isinstance(e, Var) and e.name in state:
             return state[e.name]
+        if isinstance(e, Var) and e.name in results:
+            raise UnsupportedConstruct(
+                f"{kernel.name}: function result '{e.name}' is read before it "
+                f"is assigned")
         if isinstance(e, Paren):
             return Paren(subst(e.inner, state))
         if isinstance(e, Neg):
@@ -535,5 +579,7 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
             return Call(e.name, tuple(subst(a, state) for a in e.args))
         return e
 
-    state0: dict[str, Expr] = {o: Var(o) for o in outputs}
+    # inout/out outputs start at the value the caller passed in; a result
+    # starts unbound — the caller passes nothing in for it.
+    state0: dict[str, Expr] = {o: Var(o) for o in outputs if o not in results}
     return kernel.params, outputs, go(kernel.body, state0)

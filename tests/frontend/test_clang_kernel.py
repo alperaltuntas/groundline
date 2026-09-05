@@ -113,6 +113,55 @@ def neg_clip_point (y x : ℝ) : ℝ :=
         assert print_kernel(kernel) == expected
 
 
+@needs_clang
+class TestFunctionResultFixture:
+    """A non-void point function: the return value is the single output — a
+    parameter of intent 'result' named after the function (Fortran's own
+    default for a result variable), absent from the printed binder list.
+    Every path must end in a tail `return e`; the refuse_* siblings pin the
+    neighboring shapes. The C++ mirror of tests/f90/test_kernel_function."""
+
+    source = CPP_DIR / "test_kernel_function.cpp"
+
+    def test_extraction_shape(self):
+        k = extract_kernel(self.source, "capped_ratio_point")
+        assert [(p.name, p.intent) for p in k.params] == \
+            [("a", "in"), ("b", "in"), ("maxrat", "in"),
+             ("capped_ratio_point", "result")]
+        assert [p.name for p in k.locals] == ["q"]
+
+    def test_printed_lean(self):
+        expected = """\
+def capped_ratio_point (a b maxrat : ℝ) : ℝ :=
+  let q := maxrat * b
+  if |a| > |q| then
+    maxrat
+  else a / b
+"""
+        assert print_kernel(extract_kernel(self.source, "capped_ratio_point")) == expected
+
+    def _refuse(self, function, match, *, through_printer=False):
+        with pytest.raises(UnsupportedConstruct, match=match):
+            k = extract_kernel(self.source, function)
+            if through_printer:
+                print_kernel(k)
+
+    def test_early_return_refused(self):
+        self._refuse("refuse_early_return", "non-tail position")
+
+    def test_missing_else_refused_at_functionalize(self):
+        # Extraction passes (the tail if's then-branch returns); the
+        # fall-through path never assigns the result — functionalize refuses.
+        self._refuse("refuse_missing_else", "not assigned on every control-flow path",
+                     through_printer=True)
+
+    def test_mixed_outputs_refused(self):
+        self._refuse("refuse_mixed_outputs", "two output conventions")
+
+    def test_return_in_void_kernel_refused(self):
+        self._refuse("refuse_void_return", "return statement in a void kernel")
+
+
 # =============================================================================
 # Refusals (trusted base: refuse, never guess)
 # =============================================================================
@@ -175,6 +224,25 @@ class TestExprAllowlists:
     def test_declref_to_global_refused(self):
         with pytest.raises(UnsupportedConstruct, match="only.*parameters and locals"):
             extract_expr(_declref("g", kind="EnumConstantDecl"))
+
+    def test_non_real_return_type_refused(self):
+        from groundline.frontend.clang_kernel import extract_kernel_from_decl
+        decl = {"kind": "FunctionDecl", "name": "f",
+                "type": {"qualType": "int (const Real)"},
+                "inner": [{"kind": "CompoundStmt", "inner": []}]}
+        with pytest.raises(UnsupportedConstruct,
+                           match="must return void or a real scalar"):
+            extract_kernel_from_decl(decl)
+
+    def test_return_statement_gates(self):
+        from groundline.frontend.clang_kernel import _extract_stmts
+        ret = {"kind": "ReturnStmt", "inner": [_declref("x")]}
+        with pytest.raises(UnsupportedConstruct, match="void kernel"):
+            _extract_stmts(ret, [], result=None, tail=True)
+        with pytest.raises(UnsupportedConstruct, match="non-tail position"):
+            _extract_stmts(ret, [], result="f", tail=False)
+        with pytest.raises(UnsupportedConstruct, match="without a value"):
+            _extract_stmts({"kind": "ReturnStmt"}, [], result="f", tail=True)
 
     def test_non_rt_literal_suffix_refused(self):
         node = {"kind": "UserDefinedLiteral", "inner": [

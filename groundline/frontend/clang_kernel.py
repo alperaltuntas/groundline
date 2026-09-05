@@ -7,6 +7,16 @@ everything clang-specific about kernel bodies lives here; the kernel IR,
 already per-point scalar functions, so extraction produces a rank-0
 :class:`~groundline.kir.Kernel` directly — there is no ``pointize`` on this side.
 
+Two calling conventions are admitted, never mixed: a ``void`` function whose
+outputs are its ``Real &`` parameters, and a ``Real``-returning function whose
+return value is the single output (the mirror of a Fortran ``result(name)``
+function). In the latter the value flows through ``return e`` statements,
+which must all sit in *tail position* — the last statement of the body, or of
+a branch of an ``if`` that is itself in tail position — so that every path
+ends in exactly one return; an early return (statements follow it on some
+path) refuses, and a path that falls off the end without returning refuses
+in ``functionalize`` (the result is unassigned there).
+
 Trusted-base rule (VISION D6): everything here is deterministic and small
 enough to audit. Any construct outside the supported subset raises
 :class:`~groundline.kir.UnsupportedConstruct` — refusal, never a guess.
@@ -23,7 +33,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 from groundline.kir import (
     Assign, BinOp, Call, Cmp, Expr, If, Kernel, Neg, Param, Paren, RealLit,
@@ -244,14 +254,22 @@ def _extract_call(n: dict) -> Call:
 _REAL_LOCAL_TYPES = {"Real", "const Real", "double", "const double"}
 
 
-def _extract_stmts(n: dict, locals_out: list[Param]) -> list[Stmt]:
+def _extract_stmts(n: dict, locals_out: list[Param], *,
+                   result: Optional[str] = None, tail: bool = False) -> list[Stmt]:
     """One statement node → kernel-IR statements. ``locals_out`` accumulates
-    the VarDecls encountered (C++ declares locals inline, not up front)."""
+    the VarDecls encountered (C++ declares locals inline, not up front).
+
+    ``result`` is the name the kernel's return value is assigned to (``None``
+    for a void kernel); ``tail`` says whether this statement is in tail
+    position — the only place a ``return`` may appear (see the module
+    docstring)."""
     kind = n.get("kind")
     if kind == "CompoundStmt":
         out: list[Stmt] = []
-        for c in _inner(n):
-            out.extend(_extract_stmts(c, locals_out))
+        kids = _inner(n)
+        for i, c in enumerate(kids):
+            out.extend(_extract_stmts(c, locals_out, result=result,
+                                      tail=tail and i == len(kids) - 1))
         return out
     if kind == "DeclStmt":
         out = []
@@ -270,7 +288,22 @@ def _extract_stmts(n: dict, locals_out: list[Param]) -> list[Stmt]:
                 f"'{lhs.get('kind')}'")
         return [Assign(Var(ref["name"]), extract_expr(rhs))]
     if kind == "IfStmt":
-        return [_extract_if(n, locals_out)]
+        return [_extract_if(n, locals_out, result=result, tail=tail)]
+    if kind == "ReturnStmt":
+        # The return value is the kernel's single output: `return e` assigns
+        # it. Only in tail position — an early return would make the
+        # statements after it conditional in a way the flat body cannot say.
+        if result is None:
+            raise UnsupportedConstruct("return statement in a void kernel")
+        kids = _inner(n)
+        if len(kids) != 1:
+            raise UnsupportedConstruct(
+                "return without a value in a non-void kernel")
+        if not tail:
+            raise UnsupportedConstruct(
+                "return in non-tail position (an early return — statements "
+                "follow it on some path)")
+        return [Assign(Var(result), extract_expr(kids[0]))]
     raise UnsupportedConstruct(f"statement '{kind}'")
 
 
@@ -296,7 +329,8 @@ def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Stmt:
     return Assign(Var(name), extract_expr(_only(vd, f"VarDecl '{name}'")))
 
 
-def _extract_if(n: dict, locals_out: list[Param]) -> If:
+def _extract_if(n: dict, locals_out: list[Param], *,
+                result: Optional[str] = None, tail: bool = False) -> If:
     if n.get("hasInit") or n.get("hasVar") or n.get("isConstexpr"):
         raise UnsupportedConstruct(
             "if with an init-statement / condition variable / constexpr")
@@ -305,8 +339,10 @@ def _extract_if(n: dict, locals_out: list[Param]) -> If:
     if len(kids) != (3 if has_else else 2):
         raise UnsupportedConstruct(f"if statement with {len(kids)} children")
     cond = extract_expr(kids[0])
-    then = tuple(_extract_stmts(kids[1], locals_out))
-    orelse = tuple(_extract_stmts(kids[2], locals_out)) if has_else else ()
+    # Branches inherit the if's tail position.
+    then = tuple(_extract_stmts(kids[1], locals_out, result=result, tail=tail))
+    orelse = tuple(_extract_stmts(kids[2], locals_out, result=result,
+                                  tail=tail)) if has_else else ()
     # `else if` arrives as an IfStmt in the else slot and stays nested here;
     # functionalize produces the same IfExpr chain as flang's elseif branches.
     return If(((cond, then),), orelse)
@@ -335,11 +371,26 @@ def _extract_param(pd: dict) -> Param:
         f"→ inout, 'const Real'/'const double' → in)")
 
 
+# Return types of the two admitted calling conventions (the function's
+# qualType begins with its return type): void → outputs are the `Real &`
+# parameters; a real scalar → the return value is the single output.
+_VOID_RETURN = ("void (",)
+_REAL_RETURN = ("Real (", "double (")
+
+
 def extract_kernel_from_decl(decl: dict) -> Kernel:
     name = decl.get("name")
     ret = decl.get("type", {}).get("qualType", "")
-    if not ret.startswith("void ("):
-        raise UnsupportedConstruct(f"{name}: kernel must return void, has '{ret}'")
+    if ret.startswith(_VOID_RETURN):
+        result = None
+    elif ret.startswith(_REAL_RETURN):
+        # The return value has no source name; Fortran's own default for a
+        # result variable — the function's name — is the deterministic choice.
+        result = name
+    else:
+        raise UnsupportedConstruct(
+            f"{name}: kernel must return void or a real scalar (Real/double), "
+            f"has '{ret}'")
     params: list[Param] = []
     body_node = None
     for c in _inner(decl):
@@ -360,12 +411,25 @@ def extract_kernel_from_decl(decl: dict) -> Kernel:
             raise UnsupportedConstruct(f"{name}: unexpected child '{kind}'")
     if body_node is None:
         raise UnsupportedConstruct(f"{name}: no function body")
+    if result is not None:
+        mutated = [p.name for p in params if p.intent == "inout"]
+        if mutated:
+            raise UnsupportedConstruct(
+                f"{name}: a non-void function with reference parameters "
+                f"{mutated} — two output conventions (a return value and "
+                f"mutated arguments) in one kernel")
     locals_: list[Param] = []
-    body = tuple(_extract_stmts(body_node, locals_))
+    body = tuple(_extract_stmts(body_node, locals_, result=result, tail=True))
     param_names = {p.name for p in params}
     shadowed = [l.name for l in locals_ if l.name in param_names]
     if shadowed:
         raise UnsupportedConstruct(f"{name}: locals shadow parameters {shadowed}")
+    if result is not None:
+        if result in param_names or any(l.name == result for l in locals_):
+            raise UnsupportedConstruct(
+                f"{name}: the result name (the function's own name) collides "
+                f"with a parameter or local")
+        params.append(Param(result, "real", "result", 0))
     return Kernel(name, tuple(params), tuple(locals_), body)
 
 

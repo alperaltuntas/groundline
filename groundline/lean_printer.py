@@ -166,17 +166,30 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
             f"{kernel.name}: non-real local(s) {non_real_locals} — integer "
             f"locals cannot be modeled over ℝ (integer arithmetic truncates; "
             f"the model would not)")
-    args = " ".join(p.name for p in params)
+    # A function result is an output the caller supplies no value for, so it
+    # is absent from the def's binder list; an inout/out output, whose
+    # incoming value the body may read, appears on both sides.
+    inputs = [p for p in params if p.intent != "result"]
+    if not inputs:
+        raise UnsupportedConstruct(
+            f"{kernel.name}: no input parameters — a kernel with nothing to "
+            f"read has no arguments to model")
+    args = " ".join(p.name for p in inputs)
     ret = " × ".join("ℝ" for _ in outputs)
-    # Name the outputs by their actual intents (dedup, declaration order).
-    intents = []
-    for p in params:
-        if p.intent in ("inout", "out") and p.intent not in intents:
-            intents.append(p.intent)
-    kinds = "/".join(f"`intent({i})`" for i in intents)
-    doc = (f"/-- Generated from {provenance}.\n"
-           f"Outputs `({', '.join(outputs)})` — the {kinds} arguments, "
-           f"modeled functionally over ℝ. -/\n") if provenance else ""
+    results = [p.name for p in params if p.intent == "result"]
+    if results:
+        what = (f"Result `{results[0]}` — the function result, modeled "
+                f"functionally over ℝ.")
+    else:
+        # Name the outputs by their actual intents (dedup, declaration order).
+        intents = []
+        for p in params:
+            if p.intent in ("inout", "out") and p.intent not in intents:
+                intents.append(p.intent)
+        kinds = "/".join(f"`intent({i})`" for i in intents)
+        what = (f"Outputs `({', '.join(outputs)})` — the {kinds} arguments, "
+                f"modeled functionally over ℝ.")
+    doc = f"/-- Generated from {provenance}.\n{what} -/\n" if provenance else ""
     header = f"{doc}def {kernel.name} ({args} : ℝ) : {ret} :="
     return "\n".join([header] + _print_fun(body, 1)) + "\n"
 
