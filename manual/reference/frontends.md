@@ -95,6 +95,17 @@ convention) is dropped, as pointize drops unused parameters in loop mode.
 is read past — presence is the caller's precondition, and a body that could
 branch on it (a `present()` call) refuses anyway. Anything else refuses.
 
+**Column mode** (`columns` in the manifest): the whole subroutine, its
+declarations inherited tolerantly as in inline mode, its body **pruned
+before any expression is extracted** — blocks guarded by an assumed-false
+flag, assignments to such flags, calls declared ignorable, assignments to
+integer locals that only ever feed loop bounds, and any `if` or `do` left
+empty by the pruning (its condition is never modeled; Fortran conditions have
+no side effects) — then extracted with its loops intact for the
+[column pass](../concepts/column-kernels.md). Two shapes enter here: `call
+f(…)` as a `CallStmt` with positional actuals, and a bare `:` subscript as a
+whole-dimension section.
+
 **Notable refusal boundaries** (complete list in [the catalog](refusals.md)):
 non-intrinsic calls, strides in loop control, literal kinds beyond real/int,
 chained `a%b%c` component paths, a local read before assignment.
@@ -157,6 +168,20 @@ also has `Real &` parameters refuses.
 arrive as ordinary statements and are threaded by functionalize like any
 other write, and a read before the first assignment refuses there. A
 list/direct initializer refuses.
+
+**Column mode** (`parallel_for = N`, `columns` on the cpp side): the body
+of the N-th `ParallelFor` lambda of the function, whose named `int`
+parameters are the column indices. `Array4` reads (`operator()` calls) become
+array references with the lambda's indices and the loop variable as
+subscripts — a trailing literal `0`, AMReX's unit third extent for 2-D
+fields, is dropped; `for (int k = lo; k <= hi; ++k)` becomes a plain `Do`;
+`+=` an assignment; a call statement a `CallStmt` with bare `Real &` receivers
+as outputs; a member read on a const struct reference a component read.
+Statements outside the lambda are not modeled: a captured function-scope
+variable may only be a loop bound or an assumed flag (whose guarded blocks
+are pruned, flag names matched case-insensitively). The
+[column pass](../concepts/column-kernels.md) then runs with the columns
+already bound.
 
 **No pointize.** The C++ kernels this frontend targets are already per-point
 scalar functions, so extraction emits a rank-0 `Kernel` directly;

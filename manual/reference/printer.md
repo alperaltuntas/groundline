@@ -71,9 +71,18 @@ def <name> (<params> : ℝ) : ℝ × … :=
 ```
 
 Binders are grouped by type in declaration order — real inputs as `ℝ`,
-logical inputs as `Bool` — so a kernel with a logical flag between two reals
-prints `(… dt : ℝ) (vol_cfl : Bool) (por_face_area : ℝ)`. Outputs must be
-real (the return type is `ℝ × …`), and so must locals.
+logical inputs as `Bool`, per-layer arrays as `κ → ℝ` — so a kernel with a
+logical flag between two reals prints `(… dt : ℝ) (vol_cfl : Bool)
+(por_face_area : ℝ)`. A [column kernel](../concepts/column-kernels.md) opens
+with `{κ : Type*} (ks : List κ)`, the abstract layer type and its
+enumeration. Outputs must be real or per-layer, and so must locals.
+
+Column forms: a per-layer read prints as an application `uh k`; a call to a
+banked primitive as `flux_elem (u k) (h k) … 0 0 1 dy_cu …` with compound
+arguments parenthesized; a call output as a projection `(flux_elem …).1`;
+a map as `let uh := fun k => …`; a fold as `ks.foldl (fun uhbt k => …) init`,
+on one line when the step is a bare expression and otherwise with the step's
+`let`s on their own lines and the closing `) init` after the last.
 
 The "Outputs" line **derives from the actual intents** of the kernel's output
 parameters (deduplicated, declaration order) — it used to hardcode

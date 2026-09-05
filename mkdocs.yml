@@ -62,6 +62,7 @@ nav:
       - The kernel IR and refusal: concepts/kernel-ir.md
       - Pointize: concepts/pointize.md
       - Functionalize: concepts/functionalize.md
+      - Column kernels: concepts/column-kernels.md
       - The printer's fidelity contract: concepts/printer-fidelity.md
       - The trusted base and the axioms audit: concepts/trusted-base.md
   - How-to guides:

@@ -80,6 +80,23 @@ case of the new rule and the CW84 def came out byte-identical. A trailing
 `if` — nothing after it — keeps the structured if-expression path, so kernels
 without joins are unaffected.
 
+## Column statements
+
+For [column kernels](column-kernels.md) three more statement forms reach
+functionalize, all frontend-neutral:
+
+- a **call to a banked primitive** binds each output as a projection of the
+  applied def, `let uh_val := (flux_elem_point …).1`, in the callee's output
+  order — a local receiver by `let`, a state receiver by state update;
+- a **map** binds each per-layer array its body writes as `let a := fun k =>
+  …`, later statements reading `a k`; within the body, later statements see
+  the values earlier ones assigned;
+- a **fold** binds its state variable to `ks.foldl (fun s k => step) init`,
+  where the step is the body functionalized with the state variable as its
+  sole output (locals inside are per-iteration `let`s, control flow merges
+  as anywhere else) and `init` is the state's current value. The binding
+  shadows the earlier name, so what follows reads the fold's result.
+
 ## Why this design is easy to trust
 
 Everything functionalize does is *syntactic* state bookkeeping — substitution

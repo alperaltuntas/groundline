@@ -108,6 +108,25 @@ pointize = true
   function are different things, so a loop-shaped kernel *refuses* without
   it; the option refuses on a kernel that is not a loop. What justifies the
   reduction is the subject of [Pointize](../concepts/pointize.md).
+- **Column-kernel options** ([Column kernels](../concepts/column-kernels.md)):
+    - `columns = ["j", "i"]` — the Fortran column indices; every other loop
+      index is the vertical fold index. Exclusive with `nest` and `pointize`;
+      the entry is named after its subroutine.
+    - `assume = { flag = false, … }` — declared hypotheses: every block
+      guarded by an assumed-false flag (or a conjunction containing one) is
+      pruned before modeling, as are assignments to the flag. The generated
+      def is the kernel *specialized* to the hypotheses and its doc comment
+      says so. Flag names are matched case-insensitively on both sides.
+    - `ignore_calls = ["cpu_clock_begin", …]` — procedure calls dropped as
+      declared effect-free (timers). Stamped into the doc comment too.
+    - on the `cpp` side, `parallel_for = N` selects the N-th `ParallelFor`
+      call of `function` (source order) as the kernel, and `columns = ["i", "j"]`
+      must spell its lambda's named `int` parameters; both go together.
+
+  A column kernel's calls resolve against the manifest's other entries: a
+  Fortran whole-procedure entry is a callable primitive under its subroutine
+  name, a C++ point-function entry under its function name. A call to
+  anything else refuses.
 - Either side may be omitted (a Fortran-only or C++-only entry is legal); an
   entry with neither refuses, as does a side whose section is absent.
 
@@ -120,7 +139,7 @@ doc comments — resolved absolute paths never leak into generated files.
 - [`examples/quickstart/kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/quickstart/kernels.toml)
   — the self-contained toy pair, walked through in [the quickstart](../quickstart.md).
 - [`examples/turbo-stack.kernels.toml`](https://github.com/alperaltuntas/groundline/blob/main/examples/turbo-stack.kernels.toml)
-  — the production instance (the MOM6 ⇄ TIM case study): the eleven kernel
+  — the production instance (the MOM6 ⇄ TIM case study): the thirteen kernel
   entries, the NCAR dump directory and kernel header paths, pinned AMReX/MPI
   include dirs, and the shared `[lean]` project. On another site, copy it
   and repoint the paths — that file is the *only* thing that changes.

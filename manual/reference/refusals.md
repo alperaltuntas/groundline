@@ -7,8 +7,8 @@ these sites fails loudly instead of producing a plausible-but-wrong model
 ([why that matters](../concepts/kernel-ir.md)).
 
 The catalog is complete as of this manual's writing — it was compiled by
-`grep -n "raise UnsupportedConstruct"` over the four trusted-base modules
-(100 sites), and each entry's message text is greppable in the source. Related
+`grep -n "raise UnsupportedConstruct"` over the five trusted-base modules (the kernel IR, the two frontends, the printer, the column pass)
+(177 sites), and each entry's message text is greppable in the source. Related
 but distinct: a malformed *manifest* raises `ManifestError`
 ([manifest rules](manifest.md#general-rules)), and clang/file-system failures
 raise ordinary errors — neither is a subset refusal.
@@ -97,11 +97,66 @@ implies — the early-warning surface for dump-format drift (see
 | user-defined literal with an unexpected shape, a suffix other than `_rt`, or a non-`FloatingLiteral` operand | only AMReX's `_rt` real literals are modeled |
 | any other expression node (`expression node '<kind>'`) | catch-all |
 
+## The column pass (`groundline/column.py`)
+
+Column kernels ([concept](../concepts/column-kernels.md)) are pointized over
+the manifest's `columns`; what remains must fit the fold/map model.
+
+| Trigger | Why it refuses |
+|---|---|
+| a nest that re-binds a column index already bound by an enclosing loop, or runs over the k index before every column index is bound, or has two non-column indices | the nest structure must be columns (possibly across enclosing loops) plus at most one vertical index |
+| a statement at a partial column level (`only nests may appear there`) | inside `do concurrent (j)` but outside the `I` nests nothing is per-column yet |
+| an array indexed by neither the columns nor the columns plus k, or repeating an index, or plainly by a subset (`not indexed by the column indices`) | not a per-column scalar or a per-k array — the two shapes the model has |
+| the same array read both as per-column and as per-k | one name, one shape |
+| a read at an offset in the k index (`a k-recurrence`) | the fold model reads layer `k` only |
+| a neighbor read along an index bound by a plain-do loop (`do concurrent (or ParallelFor) indices only`) | rule C's license is the binding construct's independence assertion |
+| a neighbor read of an array the nest writes (`cross-iteration recurrence`) | as in the point tier |
+| a write to a neighbor cell, or a per-k write outside a k-loop | writes land in the own cell, per-k writes inside the k-loop |
+| a whole-array assignment to an array not of the column shape, or inside a k-loop | `a(:,:) = e` is the per-column init and nothing else |
+| a k-loop writing both per-k cells and per-column state (`a scan`) | the fold model has per-column state *or* per-k results, not both (Tier C) |
+| a `do concurrent` over k that writes per-column state (`a race the source could not mean`) | an accumulation must be sequential |
+| a k-loop that writes nothing | nothing to model |
+| a loop nested inside the k-loop | one vertical loop per nest |
+| a call to a procedure that is neither a banked primitive of the manifest nor declared ignorable (`not a banked primitive`) | the callee's generated def is what a call becomes; an unknown callee has none |
+| a call whose actual count differs from the callee's dummy count | positional matching needs the whole list |
+| a keyword actual (`positional only`; Fortran frontend) | the column pass matches positionally |
+| an `IF` outside a k-loop at the column level | per-column control flow around folds is next (B3) |
+
+### Pruning under hypotheses (`flang_kernel._prune_block`, `clang_kernel._cxx_decided_false`)
+
+| Trigger | Why it refuses |
+|---|---|
+| an `if` decided false by a hypothesis but carrying elseif/else branches | reducing it to the remaining branches is not yet supported; only a bare guarded block is pruned |
+| an array section with bounds or a stride (`only a bare ':' is modeled`) | a whole-dimension section is the only section shape the model has |
+
+### C++ column mode (`clang_kernel.extract_column_kernel_from_decl`)
+
+| Trigger | Why it refuses |
+|---|---|
+| a function parameter type outside Array4 / Real / bool / const struct & / const Box & / pointer | the admitted captured shapes |
+| a `ParallelFor` ordinal out of range, a lambda without `operator()` or a body | structural |
+| the lambda's `int` parameters not spelling the declared `columns` | refuse-don't-guess at the column names |
+| the lambda referencing a captured variable that is neither a parameter, a lambda-body local, a column index, a loop variable, nor a loop bound | statements outside the lambda are not modeled, so such a value has no meaning in the model |
+| a `for` not of the shape `for (int k = lo; k <= hi; ++k)` with captured `lo`/`hi` | the one loop shape modeled as a fold/map |
+| an `Array4` access on a non-parameter, with other than three indices, a literal index other than a trailing `0`, or an index that is not a variable ± literal | the classification (per-k / per-column / stencil) needs exactly these shapes |
+| a member read through `->`, or on a non-parameter | rule B's mirror covers struct parameters only |
+
+## Functionalize, column statements (`groundline/kir.py`)
+
+| Trigger | Why it refuses |
+|---|---|
+| a fold with several state variables (`not yet supported`) | one state variable per fold today (several: B2) |
+| a fold state read before it is assigned | as for locals |
+| a map body containing anything but assignments and calls to banked primitives | a map is `fun k => …`; locals and ifs inside it are next |
+| a call output, map target, or fold state that is neither local nor output | as for assignments |
+| a fold with a multi-line step outside a `let` (printer) | the printer binds folds by `let`; functionalize always does |
+
 ## The kernel bank (`groundline/kernel_bank.py`)
 
 | Trigger | Why it refuses |
 |---|---|
 | a loop-nest kernel whose manifest entry lacks `pointize = true` (`the Fortran kernel is a loop nest, which is not the same thing as a point function`) | reducing a loop to its per-point body is a semantic step the user must license explicitly ([Pointize](../concepts/pointize.md)) |
+| (`ManifestError`) `columns` with `nest` or `pointize`; a column entry not named after its subroutine; `parallel_for` without cpp `columns` or vice versa; non-boolean `assume` values | the manifest must say exactly one thing about each kernel's shape |
 | `pointize = true` on a kernel that is not a loop nest | the option would silently do nothing — the manifest should say what is true |
 
 ## Pointize (`groundline/kir.py`)

@@ -14,6 +14,138 @@
 
 ---
 
+## 2026-09-05 (Tier B, B1) — The first column kernels: the barotropic mass fluxes, as folds calling a banked primitive
+
+**The design, accepted.** `docs/COLUMN_KERNELS.md` went in front of the user
+and was accepted as written: explicit column indices in the manifest, the
+fold model (a plain `do k` is `List.foldl` over the layer enumeration in loop
+order, per-column scalar state), calls to banked primitives as applications
+of the callee's generated def, `present(x)` and `.p != nullptr` as one Bool
+input (B3), masks as per-column Bool inputs (B2), and manifest-declared
+hypotheses that prune dead branches as a loud specialization. B1 is
+`zonal_BT_mass_flux` and its meridional twin: per column, a map filling
+`uh(I,j,k)` from `flux_elem` and a fold summing it — against the C++ lambda
+that does both in one `for k`.
+
+**What changed, by layer.**
+
+- *Kernel IR* (`kir.py`): five expression nodes — `Slice` (a bare `:`),
+  `App` (a per-layer array applied at the fold index, `uh k`), `Proj`
+  (`(f …).1`), `Lam` (`fun k => …`), `Foldl` — and four statements:
+  `CallStmt` (a call as the frontends see it), `CallBind` (resolved), `MapStmt`,
+  `FoldStmt`. `Kernel.column` marks a column kernel; `Param.type` gains
+  `real[k]`. `functionalize` binds a call's outputs as projections, a map's
+  targets as lambdas, a fold's state as `let s := ks.foldl (fun s k => step)
+  init` — the step functionalized with the state as its sole output (`go`
+  gained an `outs` argument for this) — always through a `let`, so the
+  printer has one place to render a multi-line step.
+- *The column pass* (`column.py`, new): pointizes over the declared columns
+  with the point tier's rules (A–D), classifying every array reference by
+  subscript shape — columns → per-column scalar, columns + k → per-layer
+  array, a literal offset on a column index → rule C, on k → refuse. Loop
+  nests are split into column indices and at most one k index, threading the
+  set of columns already bound by enclosing loops (a lambda binds them all at
+  entry; a Fortran `do concurrent (j)` around `(k, I)` nests binds them
+  gradually); a k-loop is a **map** when it writes only own-k cells and a
+  **fold** when it writes per-column state, and refuses as a **scan** when
+  both. Fold state is the per-column arrays written plus the scalar locals
+  bound before the loop or read-before-written inside it; a scalar declared
+  and assigned inside the loop is a per-iteration temporary (the C++
+  `uh_val`, `duhdu_val`). Stencils are licensed by the construct that bound
+  the offset's column index — `do concurrent`, or the `ParallelFor` a lambda
+  runs under — not by the k-loop's form, which is what makes the C++ `for k`
+  reading `h_in(i+1,j,k)` admissible.
+- *Calls* resolve positionally against a `Callee` (the callee's def name, its
+  full dummy list, its kept parameters). Dropped dummies (grid structs) skip;
+  `in` actuals scalarize with the dummy's type as the wanted type — this is
+  how `CS%vol_CFL` becomes a Bool input; `out` slots get a `0` placeholder;
+  `inout` slots the current value. The registries live in the kernel bank:
+  every whole-procedure Fortran entry and every point-function C++ entry is a
+  callable primitive. On the C++ side a `Real &` parameter the callee never
+  reads before assigning is reclassified `out` (`kir.reads_before_write`,
+  precise about ifs: written only when every branch writes) — without this,
+  `flux_elem_point`'s `uh`/`duhdu` would be `inout` and the caller's
+  uninitialized receivers would read before assignment.
+- *Fortran frontend*: column mode extracts the whole subroutine with tolerant
+  declarations (the OBC pointer dummy poisons only its name) after a
+  **pruning pass on the dump tree**, before any expression is extracted:
+  blocks guarded by an assumed-false flag or by a conjunction containing one
+  (`if (OBC_in_row(j) .and. …)`), assignments to assumed flags (whole-array
+  `obc_in_row(:) = .false.` included), calls in `ignore_calls`, assignments
+  to integer locals that only ever feed loop bounds (`ish = LB_in%ish`,
+  `nz = GV%ke`; the component name `ish` is not a read of the local), and
+  any `if` or `do` left empty — its condition is then never modeled, sound
+  because Fortran conditions are pure; the `if (present(LB_in))` and `if
+  (associated(OBC))` blocks vanish this way without `present`/`associated`
+  ever reaching the intrinsic gate. `CallStmt` extraction (positional actuals;
+  keyword refuses), `SubscriptTriplet` as `Slice`, and array ranks read from
+  entity declarations as well as `dimension` attributes.
+- *C++ frontend*: `parallel_for = N` addresses the N-th `LambdaExpr` of the
+  function; its `operator()`'s named `int` parameters must spell `columns`.
+  Inside: `CXXOperatorCallExpr` on `operator()` → `ArrayRef` (a trailing
+  literal `0` — AMReX's unit third extent for 2-D fields — dropped; `i+1` →
+  a stencil subscript), `MemberExpr` on a struct parameter → `ComponentRef`,
+  `for (int k = lo; k <= hi; ++k)` → `Do` (exact shape required),
+  `CompoundAssignOperator +=` → `x = x + e`, a `CallExpr` statement →
+  `CallStmt` with bare `DeclRefExpr` receivers, `if` guarded by an assumed
+  flag → pruned. Function parameters: `Array4<const Real> const&` in,
+  `Array4<Real> const&` inout, `const T &` a derived struct, `const Box &`
+  bounds, pointers must go unreferenced. Captured function-scope locals may
+  only be loop bounds or assumed flags — statements outside the lambda are
+  not modeled.
+- *Printer*: `{κ : Type*} (ks : List κ)` opens a column def; `κ → ℝ` binders;
+  application printing for `App` and banked calls (arguments at application
+  precedence); `Proj`, `Lam`; `Foldl` inline for a bare step and multi-line
+  under a `let` (closing `) init` after the step's last line).
+- *Manifest*: `columns`, `assume`, `ignore_calls` (kernel level), `parallel_for`
+  + `columns` (cpp table); `extract_*_entry` take the manifest for the callee
+  registry; the CLI passes it; parsed dumps are cached per path.
+
+**Two decisions made here that the design note did not list**, for the
+user's eye: `ignore_calls` — dropping a procedure call asserts it does not
+affect the modeled values; the manifest names each call, and the doc comment
+repeats it — and the dead-integer-local elimination, which drops assignments
+to integer locals used only as loop bounds without modeling the conditions
+around them (sound: pure conditions, values the model never reads). Also
+worth knowing: assumed-flag names are matched case-insensitively on the C++
+side too, since the manifest spells them once for both.
+
+**Fixtures.** `tests/f90/test_kernel_column` (`flux_pt`, a per-point
+callee; `column_sum`, the distilled shape with a timer call, a bounds-only
+integer local, a whole-array init, a `do concurrent (k,j,i)` map calling
+`flux_pt` with per-k `intent(out)` actuals and a stencil and a component +
+offset, a pruned guarded block whose body would refuse, and a plain
+`do k;j;i` fold; refusal siblings `scan`, `k_recurrence`, `unbanked_call`)
+and `tests/cpp/test_kernel_column.cpp` (an AMReX-shaped prelude — `Array4`,
+`Box`, `ParallelFor` — so the same JSON shapes appear; `column_sum`,
+`refuse_scan`, `refuse_unbanked_call`). Tests in `tests/test_column.py` drive
+both through the kernel bank (the call needs a registry); 14 tests. The
+generated fixture defs: the Fortran map/fold pair and the C++ single fold —
+the same term after unfolding.
+
+**Production.** Both `*_BT_mass_flux` routines extract with `columns = ["j",
+"i"]`, `assume = { local_specified_bc = false, obc_in_row = false }`,
+`ignore_calls = ["cpu_clock_begin", "cpu_clock_end"]`; the C++ lambdas with
+`parallel_for = 1, columns = ["i", "j"]`. No previously generated def changed.
+One obstacle on the way: the PR's `mom_continuity_ppm.cpp` does not compile
+standalone — `IntVect` unqualified at eight sites (two already on TURBO-ESM
+main), `IArrayBox` without its include or using-declaration — with g++ 12
+and clang 21 alike; the submodule's pre-PR commit compiled clean, so TIM's CI
+evidently does not build this directory. With the user's OK the submodule
+working tree carries the three-line fix (`using amrex::IntVect;` in the
+header; `#include <AMReX_IArrayBox.H>` and `using amrex::IArrayBox;` in the
+.cpp), to be relayed to the PR author; the manifest is unchanged.
+
+**Proof** (`Groundline/BtMassFlux.lean`): the column lemmas are `simp only
+[<the two defs>, fluxElem_point_equiv]` — unfold, zeta-reduce, rewrite the
+callee under the fold's binder, and the folds coincide term for term. The
+first generated defs that reference another generated def, and the first
+theorems composed through a banked theorem. Kernel level: the C++ launch is
+the pointwise map over columns; the Fortran accumulation nest is a plain DO
+over `(j, I)`, modeled as `foldSeq` over the column enumeration with the
+schema lemma — the map nest that precedes it is folded into the per-column
+body definitionally. Stencil neighbors are explicit maps `east` / `north`.
+
 ## 2026-09-05 (later still) — Tier A item 3: the convergence update banked — read-only stencils, subset-indexed components, nest-invariant locals
 
 **The kernels.** `continuity_zonal_convergence` and

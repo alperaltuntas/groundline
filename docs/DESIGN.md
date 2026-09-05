@@ -400,7 +400,23 @@ frontier-and-gate story real).
   `NoOp` cast and temporary-materialization wrappers their `const T&`
   signature produces. Four `rfl` point lemmas; kernel-level lifts with the
   stencil as an explicit neighbor map. Every primitive of TIM PR 36 now
-  carries a theorem; the column kernels (Tier B) are next.
+  carries a theorem.
+  **Column kernels, B1 landed 2026-09-05** (design: `docs/COLUMN_KERNELS.md`,
+  accepted): the barotropic mass fluxes `zonal_BT_mass_flux` /
+  `meridional_BT_mass_flux` against the lambdas of their C++ ports — the
+  first kernels with a sequential structure. The kernel IR gained a column
+  vocabulary (`App`, `Proj`, `Lam`, `Foldl`; `CallStmt`/`CallBind`,
+  `MapStmt`, `FoldStmt`), a column pass (`column.py`: pointize over
+  manifest-declared columns, k-loops as maps or folds, scans refused), calls
+  to banked primitives resolved against the manifest (composition through the
+  callee's theorem — the first generated defs referencing another), pruning
+  under manifest-declared hypotheses (`assume`, `ignore_calls`, dead bound
+  locals; stamped into the doc comments), and a C++ lambda address
+  (`parallel_for`). The column lemmas are `simp only` with the callee's
+  theorem: both sides sum the layers in the same order, so loop fusion is
+  definitional and no reordering is argued. Kernel level via `foldSeq` over
+  columns and the schema lemma. Next: B2 (`set_zonal_BT_cont`: masks,
+  several fold states, component-array outputs), B3 (the mass-flux j-body).
 - *Later:* kernels with cross-iteration structure (k-recurrences → induction —
   the genuinely sequential shapes the plain-DO gate refuses, e.g.
   `find_dz_for_eta`'s pressure accumulation), reductions (scalar

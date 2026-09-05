@@ -38,12 +38,16 @@ Expressions (frozen dataclasses, language-neutral):
 | `Call` | intrinsic reference (`abs`; `min`/`max` are printable) |
 | `Cond` | inline conditional expression — created only by [functionalize](functionalize.md)'s join merge, never by a frontend |
 
+| `Slice`, `App`, `Proj`, `Lam`, `Foldl` | the column vocabulary: a bare `:` subscript (whole-array assignment); a per-k array applied at the fold index (`uh k`); a tuple projection (`(f a b).1`); `fun k => …`; `ks.foldl (fun s k => …) s₀` — see [Column kernels](column-kernels.md) |
+
 Statements: `Assign`, `If` (structured, with elseif branches and an else
 body), `DoConcurrent` (multi-index nest), `Do` (one level of a plain loop,
-no stride). A kernel is `Kernel(name, params, locals, body)` with each
-`Param` carrying its declared type (`real`, `integer`, `logical`, or a
-derived type — only real and logical reach the printed def, as `ℝ` and `Bool`
-binders), intent, and rank — the intent being `in`, `inout`, `out`, or
+no stride); and, for column kernels, `CallStmt` (a call as the frontends see
+it), `CallBind` (the same call resolved against a banked callee), `MapStmt`
+and `FoldStmt` (a k-loop as a map or a fold). A kernel is `Kernel(name, params, locals, body)` with each
+`Param` carrying its declared type (`real`, `integer`, `logical`, a derived
+type, or `real[k]` for a per-layer array — real, logical and per-layer reach
+the printed def, as `ℝ`, `Bool` and `κ → ℝ` binders), intent, and rank — the intent being `in`, `inout`, `out`, or
 `result` (a function's result variable / return value: the single output, for
 which the caller supplies no value).
 

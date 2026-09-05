@@ -5,21 +5,25 @@ inventory of what does not — and what each missing piece would take.
 Everything below is **roadmap**: none of it is implemented, and none of it
 should be cited as a capability.
 
-## The frontier: reductions and k-recurrences
+## The frontier: scans, k-recurrences, and unordered reductions
 
-The current method rests on **point-locality**: every banked kernel computes
-each output cell from that cell's inputs alone, so both iteration licenses —
-`do concurrent`'s assertion and the plain-DO
-[schema lemma](concepts/pointize.md) — reduce a loop to a pointwise map. The
-kernels just past that boundary are the ones the pipeline refuses today:
+The point tier rests on **point-locality**: each output cell from that cell's
+inputs alone. The [column tier](concepts/column-kernels.md) (2026-09-05)
+moved the frontier once: an accumulation over the vertical index whose two
+implementations walk `k` **in the same order** is a fold on both sides, and
+equivalence is fold congruence — no reordering is argued, so the
+commutativity question below never arises. What the pipeline still refuses:
 
 - **k-recurrences** — `find_dz_for_eta`'s hydrostatic pressure accumulation,
   `p(i,j,K+1) = p(i,j,K) + GV%g_Earth*GV%H_to_RZ*h(i,j,k)`: iteration `k+1`
   reads what iteration `k` wrote. The boundary is marked with a committed
   refusal fixture
   ([case study](case-studies/edge-thickness-upwind.md#the-boundary-marked-with-a-refusal-fixture)).
-- **reductions** — scalar accumulators (`s = s + a(i)`), refused by the
-  plain-DO write gate as not point-local.
+  In the column model this is a per-k write that depends on the fold state —
+  a **scan** — and `zonal_flux_adjust`'s Newton iteration is the same shape.
+- **unordered reductions** — a scalar accumulator whose two implementations
+  sum in *different* orders; over ℝ the order is provably irrelevant, but the
+  lemma has to be stated and proved once. No banked kernel needs it yet.
 
 What a future step would need:
 
@@ -150,6 +154,12 @@ same generated defs behind a different binder type.
     - `ThicknessToDz.lean`: `foldSeq_eq_pointwiseMap` — an iteration-order
       lemma, arithmetic-agnostic (each cell is computed once from loop-entry
       data), float-exact.
+    - `BtMassFlux.lean`: `simp only` with the two defs and
+      `fluxElem_point_equiv` — unfolding, zeta-reduction and rewriting the
+      callee under the fold's binder; no arithmetic identity at all. The
+      folds coincide term for term because both sides sum the layers in the
+      same order, so this is float-exact as well (a `+` in the same order
+      rounds the same way).
 - *Lean's ℝ conventions.* `x / 0 = 0` in Lean; IEEE gives ±∞ or NaN. Every
   `/` in a generated def is a site a float model must speak about. Today:
   `ppm_limit_pos`'s `scale` (guarded — `curv > 0` makes the denominator
