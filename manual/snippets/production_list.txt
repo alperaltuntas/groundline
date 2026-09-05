@@ -1,4 +1,4 @@
-manifest: /glade/work/altuntas/turbo-stack/dev-utils/groundline/examples/turbo-stack.kernels.toml  (7 kernel(s))
+manifest: /glade/work/altuntas/turbo-stack/dev-utils/groundline/examples/turbo-stack.kernels.toml  (11 kernel(s))
 ppm_limit_pos
     fortran: subroutine 'ppm_limit_pos' in MOM6/MOM_continuity_PPM.o_ptree  [ok]
     cpp:     function 'ppm_limit_pos_point' in submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp  [ok]
@@ -20,5 +20,14 @@ ratio_max
 flux_elem
     fortran: subroutine 'flux_elem' in MOM6/MOM_continuity_PPM.o_ptree  [ok]
     cpp:     function 'flux_elem_point' in submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp  [ok]
+continuity_convergence_zonal
+    fortran: subroutine 'continuity_zonal_convergence', loop nest 1 in MOM6/MOM_continuity_PPM.o_ptree  [ok]
+    cpp:     function 'continuity_convergence_point' in submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp  [ok]
+continuity_convergence_zonal_inplace
+    fortran: subroutine 'continuity_zonal_convergence', loop nest 2 in MOM6/MOM_continuity_PPM.o_ptree  [ok]
+continuity_convergence_meridional
+    fortran: subroutine 'continuity_merdional_convergence', loop nest 1 in MOM6/MOM_continuity_PPM.o_ptree  [ok]
+continuity_convergence_meridional_inplace
+    fortran: subroutine 'continuity_merdional_convergence', loop nest 2 in MOM6/MOM_continuity_PPM.o_ptree  [ok]
 fortran generated module: /glade/work/altuntas/turbo-stack/dev-utils/groundline/lean/groundline/Groundline/GeneratedFtn.lean  [present]
 cpp generated module: /glade/work/altuntas/turbo-stack/dev-utils/groundline/lean/groundline/Groundline/GeneratedCpp.lean  [present]

@@ -7,6 +7,7 @@ import Groundline.EdgeThicknessUpwind
 import Groundline.ThicknessToDz
 import Groundline.RatioMax
 import Groundline.FluxElem
+import Groundline.ContinuityConvergence
 import Groundline.QuickstartEquiv
 
 set_option linter.style.header false
@@ -71,6 +72,20 @@ no `sorryAx`. The output is checked by eye in the build log.
 #print axioms Groundline.GeneratedCpp.flux_elem_point
 #print axioms Groundline.fluxElem_point_equiv
 #print axioms Groundline.fluxElem_kernel_equiv
+
+#print axioms Groundline.GeneratedCpp.continuity_convergence_point
+#print axioms Groundline.GeneratedFtn.continuity_convergence_zonal
+#print axioms Groundline.GeneratedFtn.continuity_convergence_zonal_inplace
+#print axioms Groundline.GeneratedFtn.continuity_convergence_meridional
+#print axioms Groundline.GeneratedFtn.continuity_convergence_meridional_inplace
+#print axioms Groundline.convergenceZonal_point_equiv
+#print axioms Groundline.convergenceZonalInplace_point_equiv
+#print axioms Groundline.convergenceMeridional_point_equiv
+#print axioms Groundline.convergenceMeridionalInplace_point_equiv
+#print axioms Groundline.convergenceZonal_kernel_equiv
+#print axioms Groundline.convergenceZonalInplace_kernel_equiv
+#print axioms Groundline.convergenceMeridional_kernel_equiv
+#print axioms Groundline.convergenceMeridionalInplace_kernel_equiv
 
 -- The quickstart pair (examples/quickstart/kernels.toml)
 #print axioms Quickstart.GeneratedFtn.scale_clip_acc

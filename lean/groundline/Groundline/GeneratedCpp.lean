@@ -88,6 +88,11 @@ def flux_elem_point (u h h_p1 h_L h_L_p1 h_R h_R_p1 uh duhdu visc_rem G_dy_Cu G_
   let h_marg := if u > 0 then h_R + (if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) * (h_L - h_R + 3 * ((h_L + h_R) - 2 * h) * ((if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) - 1)) else if u < 0 then h_L_p1 + (if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) * (h_R_p1 - h_L_p1 + 3 * ((h_L_p1 + h_R_p1) - 2 * h_p1) * ((if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) - 1)) else 0.5 * (h_L_p1 + h_R)
   (if u > 0 then tmp * u * (h_R + (if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) * (0.5 * (h_L - h_R) + ((h_L + h_R) - 2 * h) * ((if vol_CFL then (u * dt) * (G_dy_Cu * G_IareaT) else u * dt * G_IdxT) - 1.5))) else if u < 0 then tmp * u * (h_L_p1 + (if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) * (0.5 * (h_R_p1 - h_L_p1) + ((h_L_p1 + h_R_p1) - 2 * h_p1) * ((if vol_CFL then ((-u) * dt) * (G_dy_Cu * G_IareaT_p1) else (-u) * dt * G_IdxT_p1) - 1.5))) else 0, tmp * h_marg * visc_rem)
 
+/-- Generated from `continuity_convergence_point` in `submodules/infra/TIM/mom/cpp/mom_continuity_ppm_kernel.hpp` (clang JSON AST).
+Result `continuity_convergence_point` — the function result, modeled functionally over ℝ. -/
+def continuity_convergence_point (h_prev flux_out flux_in dt IareaT h_min : ℝ) : ℝ :=
+  max (h_prev - dt * IareaT * (flux_out - flux_in)) (h_min)
+
 end
 
 end Groundline.GeneratedCpp

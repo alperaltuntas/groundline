@@ -81,6 +81,26 @@ def flux_elem (u h h_p1 h_l h_l_p1 h_r h_r_p1 uh duhdu visc_rem g_dy_cu g_iareat
   let h_marg := if u > 0 then h_r + (if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) * (h_l - h_r + 3 * ((h_l + h_r) - 2 * h) * ((if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) - 1)) else if u < 0 then h_l_p1 + (if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) * (h_r_p1 - h_l_p1 + 3 * ((h_l_p1 + h_r_p1) - 2 * h_p1) * ((if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) - 1)) else 0.5 * (h_l_p1 + h_r)
   (if u > 0 then tmp * u * (h_r + (if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) * (0.5 * (h_l - h_r) + ((h_l + h_r) - 2 * h) * ((if vol_cfl then (u * dt) * (g_dy_cu * g_iareat) else u * dt * g_idxt) - 1.5))) else if u < 0 then tmp * u * (h_l_p1 + (if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) * (0.5 * (h_r_p1 - h_l_p1) + ((h_l_p1 + h_r_p1) - 2 * h_p1) * ((if vol_cfl then (-(u * dt)) * (g_dy_cu * g_iareat_p1) else -(u * dt * g_idxt_p1)) - 1.5))) else 0, tmp * h_marg * visc_rem)
 
+/-- Generated from loop nest 1 of `continuity_zonal_convergence` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump).
+Outputs `(h)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def continuity_convergence_zonal (h uh dt hin iareat uh_im1 h_min : ℝ) : ℝ :=
+  max (hin - dt * iareat * (uh - uh_im1)) (h_min)
+
+/-- Generated from loop nest 2 of `continuity_zonal_convergence` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump).
+Outputs `(h)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def continuity_convergence_zonal_inplace (h uh dt iareat uh_im1 h_min : ℝ) : ℝ :=
+  max (h - dt * iareat * (uh - uh_im1)) (h_min)
+
+/-- Generated from loop nest 1 of `continuity_merdional_convergence` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump).
+Outputs `(h)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def continuity_convergence_meridional (h vh dt hin iareat vh_jm1 h_min : ℝ) : ℝ :=
+  max (hin - dt * iareat * (vh - vh_jm1)) (h_min)
+
+/-- Generated from loop nest 2 of `continuity_merdional_convergence` in `MOM6/MOM_continuity_PPM.o_ptree` (flang with-sema dump).
+Outputs `(h)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def continuity_convergence_meridional_inplace (h vh dt iareat vh_jm1 h_min : ℝ) : ℝ :=
+  max (h - dt * iareat * (vh - vh_jm1)) (h_min)
+
 end
 
 end Groundline.GeneratedFtn

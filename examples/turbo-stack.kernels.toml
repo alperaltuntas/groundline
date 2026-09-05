@@ -108,3 +108,36 @@ cpp = { source = "mom_continuity_ppm_kernel.hpp", function = "ratio_max_point" }
 name = "flux_elem"
 fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "flux_elem" }
 cpp = { source = "mom_continuity_ppm_kernel.hpp", function = "flux_elem_point" }
+
+# The convergence update — four Fortran nests, one C++ primitive. Each nest is
+# the do concurrent body `h = max(h_prev - dt*IareaT*(flux_out - flux_in), h_min)`
+# with flux_in read at a neighbor (uh(I-1,j,k) or vh(i,J-1,k): rule C, a
+# read-only stencil), G%IareaT(i,j) indexed by two of the three loop indices
+# (rule B, subset), and h_min set before the loop (rule D). The C++ port does
+# the stencil at the call site and passes scalars, so all four nests pair with
+# `continuity_convergence_point`; the C++ side is declared once (a def is
+# emitted per entry) and the proofs relate each Fortran def to it.
+
+[[kernel]]
+# continuity_zonal_convergence nest 1 = the `present(hin)` branch (h_prev = hin).
+name = "continuity_convergence_zonal"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "continuity_zonal_convergence", nest = 1 }
+cpp = { source = "mom_continuity_ppm_kernel.hpp", function = "continuity_convergence_point" }
+pointize = true
+
+[[kernel]]
+# nest 2 = the in-place branch (h_prev = h itself; marked "untested" in the source).
+name = "continuity_convergence_zonal_inplace"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "continuity_zonal_convergence", nest = 2 }
+pointize = true
+
+[[kernel]]
+# continuity_merdional_convergence (sic — the source's spelling) nest 1.
+name = "continuity_convergence_meridional"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "continuity_merdional_convergence", nest = 1 }
+pointize = true
+
+[[kernel]]
+name = "continuity_convergence_meridional_inplace"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "continuity_merdional_convergence", nest = 2 }
+pointize = true
