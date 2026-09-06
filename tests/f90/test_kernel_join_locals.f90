@@ -62,7 +62,8 @@ contains
     q = q + w
   end subroutine rebound_local
 
-  ! REFUSAL (printer): a logical LOCAL — only real locals are modeled.
+  ! Supported (2026-09-05): a logical LOCAL — a `let` of a Bool-valued
+  ! expression, here a comparison; used as an IF guard.
   subroutine logical_local(u, q)
     real(8), intent(in) :: u
     real(8), intent(inout) :: q

@@ -373,10 +373,11 @@ def _load_kernel(tbl: dict, ordinal: int, fortran: Optional[FortranConfig],
             raise ManifestError(
                 f"{ctx} cpp: parallel_for (the ParallelFor lambda's ordinal) and "
                 f"columns (its index parameters) go together")
-        if pfor is not None and not columns:
+        if pfor is not None and not columns and "fortran" in tbl:
+            # A Fortran-less lambda entry (a C++-only fixture) needs no
+            # kernel-level columns — those name the Fortran loop indices.
             raise ManifestError(
-                f"{ctx}: a cpp parallel_for entry needs the Fortran-side columns "
-                f"too (or is Fortran-less; then give columns anyway)") if "fortran" in tbl else None
+                f"{ctx}: a cpp parallel_for entry needs the Fortran-side columns too")
         raw = _expand(ctbl["source"], f"{ctx} cpp")
         source = _path(raw, cpp.sources, f"{ctx} cpp")
         clabel = raw

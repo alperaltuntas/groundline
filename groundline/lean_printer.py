@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from groundline.kir import (
     App, ArrayRef, BinOp, Call, Cmp, ComponentRef, Cond, Expr, Foldl, FunExpr,
-    IfExpr, IntLit, Kernel, Lam, Let, Neg, Param, Paren, Proj, RealLit, Tuple_,
+    IfExpr, IntLit, Kernel, Lam, Let, LetPat, Neg, Param, Paren, Proj, RealLit, Tuple_,
+    TupleExpr,
     UnsupportedConstruct, Var, functionalize,
 )
 
@@ -35,12 +36,19 @@ _CMP = {"lt": "<", "le": "≤", "gt": ">", "ge": "≥", "eq": "=", "ne": "≠"}
 
 
 def _real_lit(text: str) -> str:
-    """Print a Fortran real literal as a Lean numeral (``3.0`` → ``3``)."""
-    if "." in text:
-        whole, frac = text.split(".", 1)
-        if frac.strip("0") == "":
-            return whole or "0"
-    return text
+    """Print a source real literal as a canonical Lean numeral, so that the
+    two languages' spellings of one value print alike: ``3.0`` → ``3``,
+    ``.5`` → ``0.5``, ``1.0e-12`` / ``1E-12`` / ``1.d-12`` → ``1e-12``. The
+    value is untouched — only trailing fractional zeros, the exponent letter
+    and its sign/leading zeros are normalized (Lean's ``1e-12`` and ``1.0e-12``
+    are different terms, and a proof by unfolding needs the same one)."""
+    t = text.lower().replace("d", "e")
+    mant, exp = (t.split("e", 1) + [None])[:2] if "e" in t else (t, None)
+    if "." in mant:
+        whole, frac = mant.split(".", 1)
+        frac = frac.rstrip("0")
+        mant = f"{whole or '0'}.{frac}" if frac else (whole or "0")
+    return mant if exp is None else f"{mant}e{int(exp)}"
 
 
 def _is_int_expr(e: Expr) -> bool:
@@ -116,17 +124,18 @@ def print_expr(e: Expr, parent_prec: int = 0, right: bool = False) -> str:
         return f"({s})" if parent_prec >= _ARG else s
     if isinstance(e, Proj):
         return f"({print_expr(e.inner)}).{e.idx}"
+    if isinstance(e, TupleExpr):
+        return "(" + ", ".join(print_expr(x) for x in e.elems) + ")"
     if isinstance(e, Lam):
         s = f"fun {e.index} => {print_expr(e.body)}"
         return f"({s})" if parent_prec > 0 else s
     if isinstance(e, Foldl):
         # Single-line form only (a bare step); multi-line steps are printed by
         # _print_fun when the fold is the value of a `let`.
-        if not isinstance(e.step, Tuple_) or len(e.step.elems) != 1:
+        if not isinstance(e.step, Tuple_):
             raise UnsupportedConstruct(
                 "a fold with a multi-line step must be bound by a let")
-        s = (f"ks.foldl (fun {e.state} {e.index} => {print_expr(e.step.elems[0])}) "
-             f"{print_expr(e.init, _ARG)}")
+        s = f"{_fold_head(e)} {_tuple_text(e.step)}) {_fold_init(e)}"
         return f"({s})" if parent_prec > 0 else s
     if isinstance(e, Cond):
         # Inline conditional from a merged control-flow join. `if then else`
@@ -148,18 +157,37 @@ def print_expr(e: Expr, parent_prec: int = 0, right: bool = False) -> str:
     raise UnsupportedConstruct(f"cannot print {type(e).__name__}")
 
 
+def _fold_state(f: Foldl) -> str:
+    """The fold's state binder: a name, or the pattern ``(a, b)``."""
+    return f.state[0] if len(f.state) == 1 else "(" + ", ".join(f.state) + ")"
+
+
+def _fold_head(f: Foldl) -> str:
+    return f"ks.foldl (fun {_fold_state(f)} {f.index} =>"
+
+
+def _fold_init(f: Foldl) -> str:
+    if len(f.init) == 1:
+        return print_expr(f.init[0], _ARG)
+    return "(" + ", ".join(print_expr(i) for i in f.init) + ")"
+
+
 def _print_fun(fe: FunExpr, indent: int) -> list[str]:
     ind = "  " * indent
-    if isinstance(fe, Let):
+    if isinstance(fe, (Let, LetPat)):
         v = fe.value
-        if isinstance(v, Foldl) and not (isinstance(v.step, Tuple_) and len(v.step.elems) == 1):
+        binder = fe.name if isinstance(fe, Let) else "(" + ", ".join(fe.names) + ")"
+        if isinstance(fe, LetPat) and not isinstance(v, (Foldl, Cond)):
+            raise UnsupportedConstruct(
+                "a destructuring let binds a fold's result or a joined IF's tuple only")
+        if isinstance(v, Foldl) and not isinstance(v.step, Tuple_):
             # Multi-line fold step: the lambda body on its own lines, the
             # closing paren and the initial state after the last of them.
-            head = f"{ind}let {fe.name} := ks.foldl (fun {v.state} {v.index} =>"
+            head = f"{ind}let {binder} := {_fold_head(v)}"
             step = _print_fun(v.step, indent + 2)
-            step[-1] = f"{step[-1]}) {print_expr(v.init, _ARG)}"
+            step[-1] = f"{step[-1]}) {_fold_init(v)}"
             return [head] + step + _print_fun(fe.body, indent)
-        return [f"{ind}let {fe.name} := {print_expr(v)}"] + \
+        return [f"{ind}let {binder} := {print_expr(v)}"] + \
             _print_fun(fe.body, indent)
     if isinstance(fe, Tuple_):
         return [f"{ind}{_tuple_text(fe)}"]
@@ -210,16 +238,18 @@ def print_kernel(kernel: Kernel, *, provenance: str = "") -> str:
             f"pointization: {unknown}")
     if not kernel.column and any(p.type == "real[k]" for p in params):
         raise UnsupportedConstruct(f"{kernel.name}: per-k arrays outside a column kernel")
-    # Locals must be real: an integer local would be modeled as a real (hiding
-    # the source's truncating integer arithmetic — a wrong model, not a coarse
-    # one), and a logical local has no ℝ meaning at all. Loop indices never
-    # get this far; pointize drops them.
-    non_real_locals = [p.name for p in kernel.locals if p.type not in ("real", "real[k]")]
+    # Locals must be real or logical: an integer local would be modeled as a
+    # real (hiding the source's truncating integer arithmetic — a wrong model,
+    # not a coarse one); a logical local is a `let` of a Bool-valued
+    # expression (a flag copied from an input, a comparison). Loop indices
+    # never get this far; pointize drops them.
+    non_real_locals = [p.name for p in kernel.locals
+                       if p.type not in ("real", "real[k]", "logical")]
     if non_real_locals:
         raise UnsupportedConstruct(
             f"{kernel.name}: non-real local(s) {non_real_locals} — only real "
-            f"locals are modeled (an integer local would hide truncation; a "
-            f"logical local has no meaning over ℝ)")
+            f"and logical locals are modeled (an integer local would hide "
+            f"truncation)")
     # A function result is an output the caller supplies no value for, so it
     # is absent from the def's binder list; an inout/out output, whose
     # incoming value the body may read, appears on both sides.

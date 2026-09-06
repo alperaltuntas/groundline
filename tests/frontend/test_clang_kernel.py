@@ -209,8 +209,15 @@ def rebound_local_point (u q : ℝ) : ℝ :=
     def test_partial_local_read_after_join_refused(self):
         self._refuse("refuse_partial_local", "only some paths", through_printer=True)
 
-    def test_bool_local_refused(self):
-        self._refuse("refuse_bool_local", "type 'const bool'")
+    def test_bool_local_is_a_let(self):
+        expected = """\
+def bool_local_point (u q : ℝ) : ℝ :=
+  let pos := u > 0
+  if pos then
+    q + u
+  else q
+"""
+        assert print_kernel(extract_kernel(self.source, "bool_local_point")) == expected
 
     def test_local_read_before_assignment_refused(self):
         self._refuse("refuse_read_unset", "read before it is assigned",

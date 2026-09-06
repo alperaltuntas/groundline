@@ -237,19 +237,32 @@ class Lam:
 
 
 @dataclass(frozen=True)
+class TupleExpr:
+    """A tuple *value* ``(a, b)`` inside an expression — the branches of a
+    joined IF that re-assigns several locals reading each other's prior
+    values, bound together by one destructuring :class:`LetPat`
+    (``let (a, b) := if c then (x, y) else (a, b)``). Only
+    :func:`functionalize` creates it."""
+    elems: tuple["Expr", ...]
+
+
+@dataclass(frozen=True)
 class Foldl:
     """``ks.foldl (fun state index => step) init`` — a sequential fold over
-    the k-enumeration with one state variable. ``step`` is a functional
-    expression over ``state`` (and the per-k arrays in scope) that evaluates
-    to the new state. The enumeration is the def's ``ks`` binder."""
+    the k-enumeration with one or more state variables. ``step`` is a
+    functional expression over the state (and the per-k arrays in scope) that
+    evaluates to the new state — a bare value for one state variable, the
+    tuple of the new values otherwise (Lean: ``fun (a, b) k => …``, a
+    pattern-matching lambda over the state pair). ``init`` holds one initial
+    value per state variable. The enumeration is the def's ``ks`` binder."""
     index: str
-    state: str
-    init: "Expr"
+    state: tuple[str, ...]
+    init: tuple["Expr", ...]
     step: "FunExpr"
 
 
 Expr = Union[RealLit, IntLit, Var, ArrayRef, ComponentRef, Paren, Neg, BinOp,
-             Cmp, Call, Cond, Slice, App, Proj, Lam, Foldl]
+             Cmp, Call, Cond, Slice, App, Proj, Lam, Foldl, TupleExpr]
 
 
 # --------------------------------------------------------------------------- #
@@ -273,9 +286,13 @@ class If:
 @dataclass(frozen=True)
 class DoConcurrent:
     """``do concurrent`` nest: controls are (index_name, lower, upper) in
-    source order; the body is a statement sequence."""
+    source order; the body is a statement sequence. ``mask`` is the optional
+    scalar-mask-expr (``do concurrent (i=1:n, m(i))``): iterations where it is
+    false are skipped. The point tier refuses a masked nest; the column pass
+    admits a per-column mask as ``if mask then body else skip``."""
     controls: tuple[tuple[str, Expr, Expr], ...]
     body: tuple["Stmt", ...]
+    mask: Optional[Expr] = None
 
 
 @dataclass(frozen=True)
@@ -389,6 +406,15 @@ def pointize(kernel: Kernel) -> Kernel:
             f"do-concurrent or plain-do nest")
     loop = kernel.body[0]
     if isinstance(loop, DoConcurrent):
+        if loop.mask is not None:
+            # A masked nest skips iterations; the pointwise model has no
+            # "skip" (an unwritten cell keeps its value, which the point
+            # function would have to read). Masks are admitted in the column
+            # pass, where the skip is `if mask then body else state`.
+            raise UnsupportedConstruct(
+                f"{kernel.name}: a do concurrent with a scalar mask — masked "
+                f"iterations leave their cells unwritten, which the point "
+                f"model cannot say (masks are admitted in column kernels only)")
         plain = False
         indices = tuple(name for (name, _, _) in loop.controls)
         loop_body = loop.body
@@ -649,11 +675,23 @@ class IfExpr:
 
 
 @dataclass(frozen=True)
+class LetPat:
+    """``let (a, b) := value`` — binds several names at once: the state
+    variables a fold returns (``value`` a :class:`Foldl` with two or more
+    states; the single-state fold binds with a plain :class:`Let`), or the
+    locals of a joined IF that read each other's prior values (``value`` a
+    :class:`Cond` over :class:`TupleExpr` branches)."""
+    names: tuple[str, ...]
+    value: Expr
+    body: "FunExpr"
+
+
+@dataclass(frozen=True)
 class Tuple_:
     elems: tuple[Expr, ...]
 
 
-FunExpr = Union[Let, IfExpr, Tuple_]
+FunExpr = Union[Let, LetPat, IfExpr, Tuple_]
 
 
 def _names_in_expr(e: Expr, out: set[str]) -> None:
@@ -687,12 +725,16 @@ def _names_in_expr(e: Expr, out: set[str]) -> None:
     elif isinstance(e, Lam):
         _names_in_expr(e.body, out)
     elif isinstance(e, Foldl):
-        _names_in_expr(e.init, out)
+        for i in e.init:
+            _names_in_expr(i, out)
         _names_in_fun(e.step, out)
+    elif isinstance(e, TupleExpr):
+        for x in e.elems:
+            _names_in_expr(x, out)
 
 
 def _names_in_fun(fe: "FunExpr", out: set[str]) -> None:
-    if isinstance(fe, Let):
+    if isinstance(fe, (Let, LetPat)):
         _names_in_expr(fe.value, out)
         _names_in_fun(fe.body, out)
     elif isinstance(fe, IfExpr):
@@ -721,6 +763,8 @@ def _names_in_stmt(s: Stmt, out: set[str]) -> None:
             out.add(idx)
             _names_in_expr(lo, out)
             _names_in_expr(hi, out)
+        if s.mask is not None:
+            _names_in_expr(s.mask, out)
         for x in s.body:
             _names_in_stmt(x, out)
     elif isinstance(s, Do):
@@ -849,12 +893,42 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 f"assigned on every control-flow path")
         return Tuple_(tuple(state[o] for o in outs))
 
+    def mentions(e: Expr, names: set[str]) -> bool:
+        found: set[str] = set()
+        _names_in_expr(e, found)
+        return bool(found & names)
+
+    def shield(names: set[str], state: dict[str, Expr], bound: frozenset[str],
+               outs: tuple[str, ...], k) -> FunExpr:
+        """Make binding ``names`` with ``let`` safe for the pending values.
+
+        A tracked variable's value (``state``) is symbolic — an expression over
+        the names in scope — and is printed where the path materializes it.
+        If a name it mentions is re-bound in between, the printed value would
+        read the *new* binding (variable capture: ``FA_u_W0 = FA_0 ; … ;
+        FA_0 = FAmt_0`` must not make the output read the second ``FA_0``).
+        So before a ``let`` shadows one of ``names``, every pending value of
+        this path's ``outs`` that mentions one of them is let-bound under its
+        own name first (``let fa_u_w0 := fa_0``) — shielding that name in turn,
+        recursively — and the tracked value becomes the reference to that
+        let. ``k(state', bound')`` builds the rest."""
+        for o in outs:
+            v = state.get(o)
+            if v is None or o in names or (isinstance(v, Var) and v.name == o):
+                continue
+            if mentions(v, names):
+                return shield({o}, state, bound, outs,
+                              lambda st, bd, o=o: Let(
+                                  o, st[o], shield(names, {**st, o: Var(o)}, bd | {o},
+                                                   outs, k)))
+        return k(state, bound)
+
     def go(stmts: tuple[Stmt, ...], state: dict[str, Expr],
            bound: frozenset[str], outs: tuple[str, ...]) -> FunExpr:
         """``state``: the outputs' current symbolic values (a result only once
         assigned); ``bound``: the locals currently in scope via ``Let``;
         ``outs``: the names the path materializes — the kernel's outputs, or
-        a fold step's state variable."""
+        a fold step's state variables."""
         if not stmts:
             return materialize(state, outs)
         head, rest = stmts[0], stmts[1:]
@@ -864,7 +938,8 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
             if name in outs:                     # a fold's state variable, or an output
                 return go(rest, {**state, name: value}, bound, outs)
             if name in local_names:
-                return Let(name, value, go(rest, state, bound | {name}, outs))
+                return shield({name}, state, bound, outs, lambda st, bd: Let(
+                    name, value, go(rest, st, bd | {name}, outs)))
             if name in outputs:
                 return go(rest, {**state, name: value}, bound, outs)
             raise UnsupportedConstruct(
@@ -875,15 +950,34 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 # MERGED state, with the merged locals bound first, so a later
                 # read of anything this IF may have updated observes the
                 # conditional value (sequential semantics).
-                merged, merged_locals, _ = merge_if(head, state, bound, rest, outs)
+                merged, merged_locals, _, conds, paths = merge_if(
+                    head, state, bound, rest, outs)
 
-                def bind(items: list[tuple[str, Expr]],
+                def bind(items: list[tuple[str, Expr]], st: dict[str, Expr],
                          bound_now: frozenset[str]) -> FunExpr:
+                    # The merged values all speak of the bindings *before*
+                    # the IF, so a let may be emitted only when no other
+                    # pending value mentions its name (it would read the new
+                    # binding); first-assignment order among the eligible.
+                    # Locals that read each other's prior values (`FA_avg`
+                    # from `FA_0` and `FA_0` from `FA_avg`) are bound together
+                    # by one destructuring let whose branches are tuples —
+                    # every right-hand side evaluated before any name changes.
                     if not items:
-                        return go(rest, merged, bound_now, outs)
-                    (v, e), tail = items[0], items[1:]
-                    return Let(v, e, bind(tail, bound_now | {v}))
-                return bind(list(merged_locals.items()), bound)
+                        return go(rest, st, bound_now, outs)
+                    for idx, (v, e) in enumerate(items):
+                        if any(mentions(e2, {v}) for (w, e2) in items if w != v):
+                            continue
+                        others = items[:idx] + items[idx + 1:]
+                        return shield({v}, st, bound_now, outs, lambda st2, bd2, v=v, e=e: Let(
+                            v, e, bind(others, st2, bd2 | {v})))
+                    group = [v for v, _ in items]
+                    expr: Expr = TupleExpr(tuple(paths[v][-1] for v in group))
+                    for c, i in reversed(list(zip(conds, range(len(conds))))):
+                        expr = Cond(c, TupleExpr(tuple(paths[v][i] for v in group)), expr)
+                    return shield(set(group), st, bound_now, outs, lambda st2, bd2: LetPat(
+                        tuple(group), expr, go(rest, st2, bd2 | set(group), outs)))
+                return bind(list(merged_locals.items()), merged, bound)
 
             def branch(i: int) -> FunExpr:
                 if i < len(head.branches):
@@ -906,7 +1000,8 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 if name in outs or name in outputs:
                     return bind_outs(tail, {**st, name: value}, bnd)
                 if name in local_names:
-                    return Let(name, value, bind_outs(tail, st, bnd | {name}))
+                    return shield({name}, st, bnd, outs, lambda st2, bd2: Let(
+                        name, value, bind_outs(tail, st2, bd2 | {name})))
                 raise UnsupportedConstruct(
                     f"{kernel.name}: call output bound to '{name}', neither local "
                     f"nor output")
@@ -943,48 +1038,60 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 name, tail = names[0], names[1:]
                 value = Lam(head.index, values[name])
                 if name in local_names:
-                    return Let(name, value, bind_maps(tail, st, bnd | {name}))
+                    return shield({name}, st, bnd, outs, lambda st2, bd2: Let(
+                        name, value, bind_maps(tail, st2, bd2 | {name})))
                 if name in outputs:
                     # Bound by `let` (shadowing the binder) so later per-k reads
                     # print as `name k`; the output then refers to the let.
-                    return Let(name, value,
-                               bind_maps(tail, {**st, name: Var(name)}, bnd | {name}))
+                    return shield({name}, st, bnd, outs, lambda st2, bd2: Let(
+                        name, value, bind_maps(tail, {**st2, name: Var(name)}, bd2 | {name})))
                 raise UnsupportedConstruct(
                     f"{kernel.name}: map target '{name}', neither local nor output")
             return bind_maps(order, state, bound)
         if isinstance(head, FoldStmt):
-            if len(head.state) != 1:
-                raise UnsupportedConstruct(
-                    f"{kernel.name}: a fold with several state variables "
-                    f"{list(head.state)} is not yet supported")
-            v = head.state[0]
-            if v in state:
-                init = state[v]
-            elif v in local_names and v in bound:
-                init = Var(v)
-            else:
-                raise UnsupportedConstruct(
-                    f"{kernel.name}: fold state '{v}' is read before it is assigned")
-            step = go(head.body, {**state, v: Var(v)}, bound | {v}, (v,))
-            value = Foldl(head.index, v, init, step)
-            if v in local_names or v in outputs:
-                # `let v := ks.foldl …` — shadowing the binder or the earlier
-                # let; the state (if v is an output) now refers to the let.
-                st = {**state, v: Var(v)} if v in state else state
-                return Let(v, value, go(rest, st, bound | {v}, outs))
-            raise UnsupportedConstruct(
-                f"{kernel.name}: fold state '{v}', neither local nor output")
+            # Each state variable enters the fold with its current value —
+            # an output's tracked state, or a local already bound by a let;
+            # anything else is read before assignment. The step materializes
+            # the states' tuple; the result is bound by `let v := …` (one
+            # state) or `let (v₁, v₂) := …` (several), shadowing the earlier
+            # bindings, and an output's state now refers to the let.
+            inits: list[Expr] = []
+            for v in head.state:
+                if v in state:
+                    inits.append(state[v])
+                elif v in local_names and v in bound:
+                    inits.append(Var(v))
+                else:
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: fold state '{v}' is read before it is assigned")
+                if v not in local_names and v not in outputs:
+                    raise UnsupportedConstruct(
+                        f"{kernel.name}: fold state '{v}', neither local nor output")
+            inner_state = {**state, **{v: Var(v) for v in head.state}}
+            step = go(head.body, inner_state, bound | set(head.state), head.state)
+            value = Foldl(head.index, head.state, tuple(inits), step)
+
+            def bind_fold(st: dict[str, Expr], bd: frozenset[str]) -> FunExpr:
+                st = {**st, **{v: Var(v) for v in head.state if v in st}}
+                body = go(rest, st, bd | set(head.state), outs)
+                if len(head.state) == 1:
+                    return Let(head.state[0], value, body)
+                return LetPat(head.state, value, body)
+            return shield(set(head.state), state, bound, outs, bind_fold)
         raise UnsupportedConstruct(f"{kernel.name}: {type(head).__name__} is unsupported here")
 
     def merge_if(head: If, state: dict[str, Expr], bound: frozenset[str],
                  continuation: tuple[Stmt, ...], outs: tuple[str, ...]
-                 ) -> tuple[dict[str, Expr], dict[str, Expr], list[str]]:
+                 ) -> tuple[dict[str, Expr], dict[str, Expr], list[str],
+                            list[Expr], dict[str, list[Expr]]]:
         """Merge an ``If`` that statements follow (``continuation`` = everything
         that executes after it, used only for the dead-local scan).
 
-        Returns ``(state', merged_locals, changed)``: the outputs' merged
-        state, the locals to bind after the join (first-assignment order),
-        and the names of every variable the merge touched.
+        Returns ``(state', merged_locals, changed, conds, paths)``: the
+        outputs' merged state, the locals to bind after the join
+        (first-assignment order), the names of every variable the merge
+        touched, the substituted branch conditions, and each merged local's
+        value per path (branches in order, then the else path).
         """
         conds = [subst(c, state, bound) for (c, _) in head.branches]
         bodies = [b for (_, b) in head.branches] + [head.orelse]
@@ -999,6 +1106,7 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         merged = dict(state)
         merged_locals: dict[str, Expr] = {}
         changed: list[str] = []
+        paths: dict[str, list[Expr]] = {}
         for v in order:
             values: Optional[list[Expr]] = []
             for st in states:
@@ -1029,10 +1137,11 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 expr = Cond(c, val, expr)
             if v in local_names and v not in outs:
                 merged_locals[v] = expr
+                paths[v] = values
             else:
                 merged[v] = expr
             changed.append(v)
-        return merged, merged_locals, changed
+        return merged, merged_locals, changed, conds, paths
 
     def branch_state(body: tuple[Stmt, ...], state: dict[str, Expr],
                      bound: frozenset[str], continuation: tuple[Stmt, ...],
@@ -1064,7 +1173,7 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
                 # this branch, then the outer continuation — is what may read
                 # the values it leaves.
                 inner_cont = tuple(body[idx + 1:]) + continuation
-                st, inner_locals, changed = merge_if(s, st, bound, inner_cont, outs)
+                st, inner_locals, changed, _, _ = merge_if(s, st, bound, inner_cont, outs)
                 st.update(inner_locals)
                 for v in changed:
                     if v not in assigned:
@@ -1120,7 +1229,10 @@ def functionalize(kernel: Kernel) -> tuple[tuple[Param, ...], tuple[str, ...], F
         if isinstance(e, Lam):
             return Lam(e.index, subst(e.body, state, bound))
         if isinstance(e, Foldl):
-            return Foldl(e.index, e.state, subst(e.init, state, bound), e.step)
+            return Foldl(e.index, e.state,
+                         tuple(subst(i, state, bound) for i in e.init), e.step)
+        if isinstance(e, TupleExpr):
+            return TupleExpr(tuple(subst(x, state, bound) for x in e.elems))
         if isinstance(e, Slice):
             raise UnsupportedConstruct(
                 f"{kernel.name}: an array section survived the column pass")

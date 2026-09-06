@@ -295,9 +295,17 @@ def rebound_local (u q : ℝ) : ℝ :=
         with pytest.raises(UnsupportedConstruct, match="only some paths"):
             print_kernel(extract_kernel(self.ptree, "partial_local"))
 
-    def test_logical_local_refused(self):
-        with pytest.raises(UnsupportedConstruct, match="non-real local"):
-            print_kernel(extract_kernel(self.ptree, "logical_local"))
+    def test_logical_local_is_a_let(self):
+        # A logical local is a `let` of its Bool-valued expression (2026-09-05;
+        # before that the printer refused it).
+        expected = """\
+def logical_local (u q : ℝ) : ℝ :=
+  let pos := u > 0
+  if pos then
+    q + u
+  else q
+"""
+        assert print_kernel(extract_kernel(self.ptree, "logical_local")) == expected
 
     def test_logical_output_refused(self):
         with pytest.raises(UnsupportedConstruct, match="non-real output"):

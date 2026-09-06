@@ -49,8 +49,9 @@ void rebound_local_point(Real const u, Real& q) noexcept
     q = q + w;
 }
 
-// REFUSAL: a bool local (only Real/double locals are modeled).
-void refuse_bool_local(Real const u, Real& q) noexcept
+// Supported (2026-09-05): a bool local — a `let` of a Bool-valued expression
+// (here a comparison, in column kernels a flag read), used as an `if` guard.
+void bool_local_point(Real const u, Real& q) noexcept
 {
     bool const pos = u > 0.0_rt;
     if (pos) { q = q + u; }

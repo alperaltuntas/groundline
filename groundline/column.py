@@ -15,9 +15,11 @@ against the callee's extracted kernel into :class:`~groundline.kir.CallBind`.
 Trusted-base rule (VISION D6): deterministic, small enough to audit; anything
 outside the subset raises :class:`~groundline.kir.UnsupportedConstruct` —
 refusal, never a guess. The semantics decisions the pass implements were
-licensed by the user on 2026-09-05 (DEVLOG): the fold model, calls to banked
-primitives, per-column Bool inputs, explicit column indices; masks are
-reserved for B2.
+licensed by the user on 2026-09-05 (DEVLOG, docs/COLUMN_KERNELS.md §6): the
+fold model, calls to banked primitives, per-column Bool inputs, explicit
+column indices, and masks (a ``do concurrent`` mask is ``if mask then body
+else skip``: on a fold, the step keeps its state; on per-column statements,
+an ``if`` without else; on a map it refuses — skipped cells stay unwritten).
 
 Array classification (by subscript shape, never by declared rank):
 
@@ -29,12 +31,22 @@ Array classification (by subscript shape, never by declared rank):
 - a literal offset on ``k``                      → refuses (a k-recurrence)
 - all subscripts ``:`` on a column-shaped array  → the whole-array assignment
   ``a(:,:) = e`` is the per-column scalar assignment ``a = e``
+- a *local* array indexed plainly by a strict subset of the column indices
+  (``duL(I)`` under ``do j``: a row scratch)      → a per-column scalar ``Var``.
+  Sound because the cells the columns share along the omitted index are a
+  local nobody outside observes, the omitted index is bound by a plain
+  (sequential) loop, and a read of the scratch before the column body writes
+  it — the only way a value could cross from one column to another — refuses
+  in ``functionalize``
 - anything else                                  → refuses
 
 Writes: to a per-column cell or scalar local outside any k-loop → a scalar
 statement; inside a plain ``do k`` → fold state; to an own-``k`` cell inside a
-k-loop → a map target. A k-loop writing both per-column state and per-k cells
-is a **scan** and refuses (Tier C).
+k-loop → a map target; to a component array of an ``intent(inout)``
+derived-type dummy at the column cell (``BT_cont%FA_u_W0(I,j) = …``) → a
+synthesized per-column *output* named after the component (rule B for
+outputs). A k-loop writing both per-column state and per-k cells is a
+**scan** and refuses (Tier C).
 """
 
 from __future__ import annotations
@@ -117,7 +129,8 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
                 f"{kernel.name}: '{name}' is read both as a per-column and as a "
                 f"per-k array")
 
-    def synth_param(key: tuple, name: str, type_: str, what: str) -> Param:
+    def synth_param(key: tuple, name: str, type_: str, what: str,
+                    intent: str = "in") -> Param:
         if key not in synth:
             taken = (name in param_by_name or name in cols
                      or (name in local_names and key[0] != "local")
@@ -126,7 +139,7 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
                 raise UnsupportedConstruct(
                     f"{kernel.name}: synthesized parameter '{name}' for {what} "
                     f"collides with an existing name")
-            synth[key] = Param(name, type_, "in", 0)
+            synth[key] = Param(name, type_, intent, 0)
         return synth[key]
 
     # ---- subscripts ----------------------------------------------------------
@@ -183,6 +196,18 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
             return "column", parsed
         if ctx.k and set(names) == set(cols) | {ctx.k}:
             return "k", parsed
+        if (isinstance(e, ArrayRef) and e.name in local_names and names
+                and set(names) < set(cols) and all(o == 0 for (_, o) in parsed)):
+            # A row scratch (module docstring): per column, provided the
+            # omitted column indices run sequentially — under a do concurrent
+            # the columns sharing a cell would race.
+            racing = [c for c in cols if c not in names and ctx.col_conc.get(c, False)]
+            if racing:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: local array {what}{fmt(parsed)} is shared by "
+                    f"the columns along {racing}, bound by do concurrent (or "
+                    f"ParallelFor) — a race the source could not mean")
+            return "column", parsed
         raise UnsupportedConstruct(
             f"{kernel.name}: {what}{fmt(parsed)} is indexed by neither the column "
             f"indices {cols} nor the columns plus the k index")
@@ -302,9 +327,30 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
             note_shape(t.name, kind)
             return t.name, kind
         if isinstance(t, ComponentRef):
-            raise UnsupportedConstruct(
-                f"{kernel.name}: assignment to derived-type component "
-                f"{t.base}%{t.comp} is unsupported")
+            # Rule B for outputs: a component array of an intent(inout)
+            # derived-type dummy, written at the column cell, is a per-column
+            # output named after the component. (Reads of such a component
+            # refuse in `scal` — the base is not intent(in) — so an output
+            # component is write-only, and its incoming value is never read.)
+            base = param_by_name.get(t.base)
+            what = f"the component write {t.base}%{t.comp}"
+            if (base is None or not base.type.startswith("derived:")
+                    or base.intent != "inout"):
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: {what} — the base must be an intent(inout) "
+                    f"derived-type dummy argument")
+            if ctx.k is not None:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: {what} inside a k-loop is not supported")
+            parsed = parse_subs(t, cols)
+            names = [p[0] for p in parsed if p is not None]
+            if (None in parsed or set(names) != set(cols) or len(names) != len(cols)
+                    or any(o != 0 for (_, o) in parsed)):
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: {what}{fmt(parsed)} must be indexed exactly by "
+                    f"the column indices {cols}")
+            p = synth_param(("compout", t.base, t.comp), t.comp, "real", what, intent="out")
+            return p.name, "column"
         raise UnsupportedConstruct(f"{kernel.name}: unsupported assignment target")
 
     # ---- calls ---------------------------------------------------------------
@@ -339,17 +385,27 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
         return CallBind(callee.def_name, tuple(args), tuple(outs)), out_kinds
 
     # ---- statements ----------------------------------------------------------
-    def nest_indices(loop) -> tuple[list[str], tuple[Stmt, ...], bool]:
-        """Indices (source order) and innermost body of a nest; plain nests
-        must be perfectly nested (rule A)."""
-        if isinstance(loop, DoConcurrent):
-            return [n for (n, _, _) in loop.controls], loop.body, True
-        names = [loop.control[0]]
-        body = loop.body
-        while len(body) == 1 and isinstance(body[0], Do):
-            names.append(body[0].control[0])
-            body = body[0].body
-        return names, body, False
+    def nest_indices(loop) -> tuple[list[str], tuple[Stmt, ...], dict[str, bool],
+                                    Optional[Expr]]:
+        """Indices (source order), innermost body, per-index concurrency
+        (True under `do concurrent`) and the mask of a nest. Plain levels must
+        be perfectly nested (rule A); a plain chain may end in a `do
+        concurrent` (`do k ; do concurrent (I, mask)`), whose indices and
+        mask are the nest's innermost."""
+        names: list[str] = []
+        conc: dict[str, bool] = {}
+        body: tuple[Stmt, ...] = (loop,)
+        while len(body) == 1 and isinstance(body[0], (Do, DoConcurrent)):
+            inner = body[0]
+            if isinstance(inner, DoConcurrent):
+                for (n, _, _) in inner.controls:
+                    names.append(n)
+                    conc[n] = True
+                return names, inner.body, conc, inner.mask
+            names.append(inner.control[0])
+            conc[inner.control[0]] = False
+            body = inner.body
+        return names, body, conc, None
 
     def nest_write_names(body: tuple[Stmt, ...]) -> set[str]:
         acc: set[str] = set()
@@ -414,7 +470,7 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
         an independence-asserting construct. This nest must bind the remaining
         ones (plus at most one k index); when it binds only some, its body may
         hold nothing but further nests."""
-        names, body, concurrent = nest_indices(loop)
+        names, body, conc, mask = nest_indices(loop)
         if len(set(names)) != len(names):
             raise UnsupportedConstruct(f"{kernel.name}: duplicate loop index in a nest {names}")
         col_part = [n for n in names if n in cols]
@@ -424,12 +480,16 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
                 f"{kernel.name}: nest over {names} re-binds a column index already "
                 f"bound by an enclosing loop")
         now_bound = bound | set(col_part)
-        now_conc = {**bound_conc, **{n: concurrent for n in col_part}}
+        now_conc = {**bound_conc, **{n: conc[n] for n in col_part}}
         if now_bound != set(cols):
             if rest:
                 raise UnsupportedConstruct(
                     f"{kernel.name}: nest over {names} runs over the k index before "
                     f"every column index {cols} is bound")
+            if mask is not None:
+                raise UnsupportedConstruct(
+                    f"{kernel.name}: a mask on a nest that binds only some of the "
+                    f"column indices {cols} is not supported")
             inner: list[Stmt] = []
             for s in body:
                 if isinstance(s, (Do, DoConcurrent)):
@@ -452,13 +512,22 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
         writes_col: list[str] = []
         for s in body:
             out = translate_stmt(s, ctx, writes_k, writes_col)
-            if out is not None:
+            if isinstance(out, list):
+                stmts.extend(out)
+            elif out is not None:
                 stmts.append(out)
         if not stmts:
             return None
+        # The mask (licensed 2026-09-05): iterations where it is false do
+        # nothing, so the body runs under `if mask` — a fold step keeps its
+        # state, per-column statements become a guarded block, and a map
+        # refuses (its skipped cells would stay unwritten).
+        cond = scal(mask, ctx) if mask is not None else None
         if k is None:
             for w in writes_col:
                 col_assigned.add(w)
+            if cond is not None:
+                return If(((cond, tuple(stmts)),), ())
             return stmts if len(stmts) > 1 else stmts[0]        # per-column statements
         # A scalar local written in the k-loop is fold state only when it was
         # bound before the loop or is read before written inside it (carried
@@ -472,14 +541,20 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
                 f"{writes_k} and per-column state {writes_col} — a scan, outside "
                 f"the fold model")
         if writes_col:
-            if concurrent:
+            if conc[k]:
                 raise UnsupportedConstruct(
                     f"{kernel.name}: a do concurrent over '{k}' writes per-column "
                     f"state {writes_col} — a race the source could not mean")
             col_assigned.update(writes_col)
+            if cond is not None:
+                stmts = [If(((cond, tuple(stmts)),), ())]
             return FoldStmt(k, tuple(writes_col), tuple(stmts))
         if not writes_k:
             raise UnsupportedConstruct(f"{kernel.name}: the k-loop over '{k}' writes nothing")
+        if cond is not None:
+            raise UnsupportedConstruct(
+                f"{kernel.name}: a masked map over '{k}' — the cells of skipped "
+                f"iterations would stay unwritten, which a `fun k => …` cannot say")
         return MapStmt(k, tuple(stmts))
 
     def translate_stmt(s: Stmt, ctx: Ctx, writes_k: list[str],
@@ -510,16 +585,21 @@ def columnize(kernel: Kernel, columns: tuple[str, ...],
                     col_assigned.add(name)
             return bind
         if isinstance(s, If):
-            if ctx.k is None:
-                raise UnsupportedConstruct(
-                    f"{kernel.name}: an IF outside a k-loop at the column level is "
-                    f"not yet supported")
-            branches = []
-            for (c, body) in s.branches:
-                inner = [translate_stmt(x, ctx, writes_k, writes_col) for x in body]
-                branches.append((scal(c, ctx), tuple(x for x in inner if x is not None)))
-            orelse = [translate_stmt(x, ctx, writes_k, writes_col) for x in s.orelse]
-            return If(tuple(branches), tuple(x for x in orelse if x is not None))
+            # Inside a k-loop: a conditional step of the fold (or map). At
+            # the column level: a per-column conditional whose branches may
+            # hold per-column statements and whole k-nests (the C++'s
+            # `if (active) { for k … }`); functionalize joins the branches.
+            def block(body):
+                out: list[Stmt] = []
+                for x in body:
+                    t = translate_stmt(x, ctx, writes_k, writes_col)
+                    if isinstance(t, list):
+                        out.extend(t)
+                    elif t is not None:
+                        out.append(t)
+                return tuple(out)
+            branches = tuple((scal(c, ctx), block(body)) for (c, body) in s.branches)
+            return If(branches, block(s.orelse))
         if isinstance(s, (Do, DoConcurrent)):
             if ctx.k is not None:
                 raise UnsupportedConstruct(

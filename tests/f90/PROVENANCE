@@ -1,7 +1,7 @@
 Provenance of the *_ptree fixtures in this directory.
 Regenerate with ./gen_ptree_files.sh (with-sema dump, VISION D4).
 
-Generated: 2026-09-05 22:43:57 UTC
+Generated: 2026-09-06 00:13:06 UTC
 Command:   flang -fc1 -fdebug-dump-parse-tree <file>.f90
 
 flang version 21.0.0git (https://github.com/llvm/llvm-project.git bb982e733cfcda7e4cfb0583544f68af65211ed1)

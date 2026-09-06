@@ -30,6 +30,8 @@ Lean, both of which are address-free.
 from __future__ import annotations
 
 import json
+import math
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -108,6 +110,94 @@ def find_function(objs: list[dict], name: str) -> dict:
         raise UnsupportedConstruct(
             f"function '{name}': found {len(hits)} definitions in the dump")
     return hits[0]
+
+
+# A real literal token as written: digits with an optional fraction and
+# exponent, optionally amrex's `_rt` suffix. Hex floats and the f/l suffixes
+# (a different type than Real) fall outside and refuse.
+_LIT_TOKEN = re.compile(r"^(?=.*\d)(\d*\.?\d*(?:[eE][+-]?\d+)?)(_rt)?$")
+
+
+def annotate_literal_spellings(objs: list[dict]) -> None:
+    """Attach each ``FloatingLiteral``'s *source spelling* to its node
+    (``n["spelling"]``), read from the file at the node's byte offset.
+
+    The JSON's ``value`` is the parsed number printed back from clang's
+    internal float — for a long-double literal (every ``_rt`` literal) that is
+    an approximation with its own digits (``0.1_rt`` prints as
+    ``0.100000000000000000001``), and printing it into an ℝ model would state
+    a value the source never wrote. The spelling is the truth; ``value`` is
+    kept as a cross-check (the two must agree to double precision, or the
+    spelling is not attached and the literal refuses).
+
+    Locations are tracked the way clang prints them — a ``file`` key appears
+    on the first location in a new file and is elided until it changes. A
+    token produced by a macro carries a ``spellingLoc`` (the macro's file)
+    and an ``expansionLoc`` (where it landed); the file is tracked by the
+    expansion — that is where the following tokens live — and a literal that
+    is itself macro-produced gets no spelling (and refuses)."""
+    files: dict[str, bytes] = {}
+
+    def loc_of(d: Optional[dict]) -> Optional[dict]:
+        if not isinstance(d, dict):
+            return None
+        return d.get("expansionLoc", d) if "offset" not in d else d
+
+    def walk(n: dict, cur_file: Optional[str]) -> Optional[str]:
+        for key in ("loc", "range"):
+            d = n.get(key)
+            if key == "range" and isinstance(d, dict):
+                d = d.get("begin")
+            d = loc_of(d)
+            if isinstance(d, dict) and d.get("file"):
+                cur_file = d["file"]
+        if n.get("kind") == "FloatingLiteral" and cur_file:
+            begin = n.get("range", {}).get("begin")
+            if isinstance(begin, dict) and "offset" in begin and "tokLen" in begin:
+                try:
+                    data = files.setdefault(cur_file, Path(cur_file).read_bytes())
+                    tok = data[begin["offset"]:begin["offset"] + begin["tokLen"]].decode("ascii")
+                except (OSError, UnicodeDecodeError):
+                    tok = ""
+                m = _LIT_TOKEN.match(tok)
+                if m:
+                    spelling = m.group(1)
+                    try:
+                        agree = math.isclose(float(spelling), float(n.get("value", "nan")),
+                                             rel_tol=1e-15, abs_tol=0.0)
+                    except ValueError:
+                        agree = False
+                    if agree:
+                        n["spelling"] = spelling
+        for c in n.get("inner", []):
+            if isinstance(c, dict):
+                cur_file = walk(c, cur_file)
+        return cur_file
+
+    cur: Optional[str] = None
+    for o in objs:
+        cur = walk(o, cur)
+
+
+def load_function(source: Path, function: str, *, clang: str = "clang++",
+                  include_dirs: Sequence[str] = ()) -> dict:
+    """Run clang and return ``function``'s FunctionDecl, literal spellings
+    attached (the single entry point both extraction modes use)."""
+    text = dump_function_json(source, function, clang=clang, include_dirs=include_dirs)
+    objs = parse_ast_objects(text)
+    annotate_literal_spellings(objs)
+    return find_function(objs, function)
+
+
+def _lit_text(n: dict) -> str:
+    """A FloatingLiteral's source spelling (see :func:`annotate_literal_spellings`)."""
+    spelling = n.get("spelling")
+    if spelling is None:
+        raise UnsupportedConstruct(
+            f"real literal (clang value '{n.get('value')}') without a recoverable "
+            f"source spelling — the parsed value is not the written one, and only "
+            f"the written one is printed")
+    return spelling
 
 
 # --------------------------------------------------------------------------- #
@@ -197,7 +287,7 @@ def extract_expr(n: dict) -> Expr:
                 f"parameters and locals are supported in expressions")
         return Var(ref["name"])
     if kind == "FloatingLiteral":
-        return RealLit(n["value"])
+        return RealLit(_lit_text(n))
     if kind == "UserDefinedLiteral":
         return _extract_udl(n)
     if kind == "ParenExpr":
@@ -213,6 +303,11 @@ def extract_expr(n: dict) -> Expr:
             raise UnsupportedConstruct(f"binary operator with {len(kids)} operands")
         if op in _BINOPS:
             return BinOp(_BINOPS[op], extract_expr(kids[0]), extract_expr(kids[1]))
+        if op == "!=" and _is_flag_array_read(kids[0]) and _is_int_zero(kids[1]):
+            # `do_I(i,j,0) != 0`: the C++ spelling of a logical flag stored in
+            # an integer Array4 — the read IS the flag (a Bool per cell); the
+            # integer never appears as a value.
+            return _extract_array_read(_unwrap_casts(kids[0]), as_flag=True)
         if op in _CMPS:
             return Cmp(_CMPS[op], extract_expr(kids[0]), extract_expr(kids[1]))
         raise UnsupportedConstruct(f"binary operator '{op}' in expression position")
@@ -232,13 +327,34 @@ def extract_expr(n: dict) -> Expr:
     raise UnsupportedConstruct(f"expression node '{kind}'")
 
 
-def _extract_array_read(n: dict) -> ArrayRef:
+# The integer Array4 spelling of a per-cell logical flag (AMReX has no bool
+# Array4); readable only as `x(i,j,k) != 0` — see extract_expr.
+_FLAG_ARRAY_TYPES = ("const Array4<const int> &",)
+
+
+def _is_flag_array_read(n: dict) -> bool:
+    n = _unwrap_casts(n)
+    if n.get("kind") != "CXXOperatorCallExpr":
+        return False
+    kids = _inner(n)
+    arr = _unwrap_casts(kids[1]) if len(kids) >= 2 else {}
+    qual = arr.get("referencedDecl", {}).get("type", {}).get("qualType", "")
+    return arr.get("kind") == "DeclRefExpr" and qual in _FLAG_ARRAY_TYPES
+
+
+def _is_int_zero(n: dict) -> bool:
+    n = _unwrap_casts(n)
+    return n.get("kind") == "IntegerLiteral" and n.get("value") == "0"
+
+
+def _extract_array_read(n: dict, *, as_flag: bool = False) -> ArrayRef:
     """``a(i, j, k)`` on an ``Array4`` parameter — ``operator()`` applied to
     the array and three index expressions. Indices are addresses: a lambda
     column index or the loop variable (a ``DeclRefExpr``), one of them plus
     or minus an integer literal (a stencil), or a trailing literal ``0`` — the
     unit third extent AMReX gives 2-D fields, dropped so the reference has
-    the column shape. Anything else in an index position refuses."""
+    the column shape. Anything else in an index position refuses. An integer
+    (flag) array is readable only in the ``!= 0`` shape (``as_flag``)."""
     kids = _inner(n)
     if not kids:
         raise UnsupportedConstruct("operator call with no callee")
@@ -252,6 +368,11 @@ def _extract_array_read(n: dict) -> ArrayRef:
     if arr.get("kind") != "DeclRefExpr" or \
             arr.get("referencedDecl", {}).get("kind") != "ParmVarDecl":
         raise UnsupportedConstruct("Array4 access on something other than a parameter")
+    if _is_flag_array_read(n) and not as_flag:
+        raise UnsupportedConstruct(
+            f"integer Array4 '{arr['referencedDecl']['name']}' read as a value — "
+            f"an integer array is admitted only as a per-cell flag, in the "
+            f"shape `x(i,j,k) != 0`")
     subs: list[Expr] = []
     for pos, idx in enumerate(kids[2:]):
         idx = _unwrap_casts(idx)
@@ -294,7 +415,7 @@ def _extract_udl(n: dict) -> RealLit:
     if lit.get("kind") != "FloatingLiteral":
         raise UnsupportedConstruct(
             f"user-defined literal operand '{lit.get('kind')}'")
-    return RealLit(lit["value"])
+    return RealLit(_lit_text(lit))
 
 
 def _extract_call(n: dict) -> Call:
@@ -326,11 +447,13 @@ def _extract_call(n: dict) -> Call:
 # Statement extraction
 # --------------------------------------------------------------------------- #
 
-# Local declarations: real scalars only, matched on the observed qualType
+# Local declarations: real scalars, matched on the observed qualType
 # spellings — `Real` (amrex's alias; the headers do `using amrex::Real`, so
-# qualType prints the alias) and plain `double`, each optionally const.
-# Anything else — a non-real local, a pointer, a reference — refuses.
+# qualType prints the alias) and plain `double`, each optionally const — and
+# bool scalars (a `let` of a Bool-valued expression). Anything else — an
+# integer local, a pointer, a reference — refuses.
 _REAL_LOCAL_TYPES = {"Real", "const Real", "double", "const double"}
+_BOOL_LOCAL_TYPES = {"bool", "const bool"}
 
 
 def _extract_stmts(n: dict, locals_out: list[Param], *,
@@ -430,9 +553,9 @@ def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Optional[Stmt]:
         raise UnsupportedConstruct(f"declaration '{vd.get('kind')}'")
     name = vd["name"]
     qual = vd.get("type", {}).get("qualType")
-    if qual not in _REAL_LOCAL_TYPES:
+    if qual not in _REAL_LOCAL_TYPES and qual not in _BOOL_LOCAL_TYPES:
         raise UnsupportedConstruct(f"local '{name}': type '{qual}' (only real "
-                                   f"scalars — Real or double — are supported)")
+                                   f"scalars — Real or double — and bool are supported)")
     init = vd.get("init")
     if init is not None and init != "c":
         raise UnsupportedConstruct(
@@ -442,7 +565,7 @@ def _extract_vardecl(vd: dict, locals_out: list[Param]) -> Optional[Stmt]:
         raise UnsupportedConstruct(
             f"local '{name}' declared more than once (C++ block scoping does "
             f"not map to the flat Let model)")
-    locals_out.append(Param(name, "real", None, 0))
+    locals_out.append(Param(name, "logical" if qual in _BOOL_LOCAL_TYPES else "real", None, 0))
     if init is None:
         return None
     return Assign(Var(name), extract_expr(_only(vd, f"VarDecl '{name}'")))
@@ -539,8 +662,14 @@ def _extract_if(n: dict, locals_out: list[Param], *,
                                 column=column))
     orelse = tuple(_extract_stmts(kids[2], locals_out, result=result,
                                   tail=tail, column=column)) if has_else else ()
-    # `else if` arrives as an IfStmt in the else slot and stays nested here;
-    # functionalize produces the same IfExpr chain as flang's elseif branches.
+    # `else if` arrives as an IfStmt in the else slot (C++ has no elseif). An
+    # else holding exactly one if IS an elseif, so it is flattened into the
+    # branch list — the same IR flang's ElseIfBlock yields — so that the two
+    # frontends' joins take the same shape (a nested if would merge in two
+    # steps and print its tuple differently).
+    if len(orelse) == 1 and isinstance(orelse[0], If):
+        inner = orelse[0]
+        return If(((cond, then),) + inner.branches, inner.orelse)
     return If(((cond, then),), orelse)
 
 
@@ -643,6 +772,8 @@ def _extract_column_param(pd: dict) -> Param:
         return Param(name, "real", "in", 3)
     if qual.startswith("const Array4<Real> &") or qual.startswith("const Array4<double> &"):
         return Param(name, "real", "inout", 3)
+    if qual in _FLAG_ARRAY_TYPES:
+        return Param(name, "logical", "in", 3)     # a per-cell flag, read as `!= 0`
     if qual in ("Real", "const Real", "double", "const double"):
         return Param(name, "real", "in", 0)
     if qual in ("bool", "const bool"):
@@ -707,9 +838,46 @@ def extract_column_kernel_from_decl(decl: dict, parallel_for: int,
     ctx = _ColumnCtx(assume)
     locals_: list[Param] = []
     stmts = tuple(_extract_stmts(lbody, locals_, column=ctx))
-    # Captured function-scope locals: only loop bounds may be referenced.
+    # Captured function-scope locals: loop bounds, or `const Real` scalars
+    # declared at the function's top level from an expression over the
+    # parameters (`const Real Idt = 1.0_rt / dt;`) — the C++ hoists what the
+    # Fortran computes before its loops. Those the lambda reads (directly or
+    # through another such local) are prepended to the body, in declaration
+    # order, as the Fortran's own pre-loop assignments are. A non-const
+    # captured Real refuses: its value at capture is not its declaration.
+    prologue: dict[str, tuple[Param, Stmt]] = {}
+    nonconst: set[str] = set()
+    for c in _inner(body_node):
+        if c.get("kind") != "DeclStmt":
+            continue
+        for vd in _inner(c):
+            qual = vd.get("type", {}).get("qualType")
+            if vd.get("kind") != "VarDecl" or vd.get("name") is None:
+                continue
+            if qual in ("const Real", "const double") and vd.get("init") == "c":
+                scratch: list[Param] = []
+                init = _extract_vardecl(vd, scratch)
+                prologue[vd["name"]] = (scratch[0], init)
+            elif qual in _REAL_LOCAL_TYPES:
+                nonconst.add(vd["name"])
     from groundline.kir import _names_in_stmt
     used: set[str] = set()
+    for s in stmts:
+        _names_in_stmt(s, used)
+    needed: set[str] = set()
+    for pname in reversed(list(prologue)):          # later decls may read earlier ones
+        if pname in used or pname in needed:
+            needed.add(pname)
+            _names_in_stmt(prologue[pname][1], needed)
+    hoisted = [prologue[p] for p in prologue if p in needed]
+    bad = sorted((used | needed) & nonconst - set(prologue))
+    if bad:
+        raise UnsupportedConstruct(
+            f"{name}: the lambda captures non-const function-scope real(s) "
+            f"{bad} — only `const Real` prologue locals are hoisted into the model")
+    locals_ = [p for p, _ in hoisted] + locals_
+    stmts = tuple(s for _, s in hoisted) + stmts
+    used = set()
     for s in stmts:
         _names_in_stmt(s, used)
     known = {p.name for p in params} | {l.name for l in locals_} | set(named) \
@@ -719,7 +887,7 @@ def extract_column_kernel_from_decl(decl: dict, parallel_for: int,
         raise UnsupportedConstruct(
             f"{name}: the lambda references {unknown}, which are neither "
             f"parameters, lambda-body locals, column indices, loop variables, "
-            f"nor loop bounds")
+            f"loop bounds, nor const Real prologue locals")
     # Loop variables and column indices are integer locals of the raw kernel
     # (the column pass consumes them); bounds are dropped.
     locals_ += [Param(k, "integer", None, 0) for k in sorted(ctx.loop_vars | set(named))]
@@ -729,9 +897,8 @@ def extract_column_kernel_from_decl(decl: dict, parallel_for: int,
 def extract_kernel(source: Path, function: str, *, clang: str = "clang++",
                    include_dirs: Sequence[str] = ()) -> Kernel:
     """Extract ``function`` from the C++ ``source`` (header or TU) via clang."""
-    text = dump_function_json(source, function, clang=clang,
-                              include_dirs=include_dirs)
-    return extract_kernel_from_decl(find_function(parse_ast_objects(text), function))
+    return extract_kernel_from_decl(
+        load_function(source, function, clang=clang, include_dirs=include_dirs))
 
 
 # --------------------------------------------------------------------------- #
@@ -747,9 +914,8 @@ class ClangKernelFrontend:
 
     def extract(self, spec: CppKernelSpec) -> Kernel:
         if spec.parallel_for is not None:
-            text = dump_function_json(spec.source, spec.function, clang=spec.compiler,
-                                      include_dirs=spec.include_dirs)
-            decl = find_function(parse_ast_objects(text), spec.function)
+            decl = load_function(spec.source, spec.function, clang=spec.compiler,
+                                 include_dirs=spec.include_dirs)
             return extract_column_kernel_from_decl(
                 decl, spec.parallel_for, spec.columns, dict(spec.assume))
         return extract_kernel(spec.source, spec.function, clang=spec.compiler,

@@ -425,17 +425,33 @@ def _extract_do(n: Node) -> Stmt:
     do_stmt = n.child("NonLabelDoStmt")
     loop = do_stmt.child("LoopControl").only_child()
     if loop.name == "Concurrent":
+        # `Concurrent` holds the header and any locality specs
+        # (`local(x)`, `shared(y)`, `reduce(...)`); none is modeled yet — a
+        # `local` would be harmless (the model binds locals per iteration
+        # anyway) but is refused until a kernel carries one.
+        extra = [c.name for c in loop.children if c.name != "ConcurrentHeader"]
+        if extra:
+            raise UnsupportedConstruct(
+                f"do-concurrent with locality specs {extra} is unsupported")
         header = loop.child("ConcurrentHeader")
         controls = []
-        for cc in header.children_named("ConcurrentControl"):
-            idx = cc.child("Name").payload
-            bounds = [extract_expr(_descend_subscript(sc))
-                      for sc in cc.children_named("Scalar")]
-            if len(bounds) != 2:
-                raise UnsupportedConstruct("do-concurrent with a stride is unsupported")
-            controls.append((idx, bounds[0], bounds[1]))
+        mask = None
+        for kid in header.children:
+            if kid.name == "ConcurrentControl":
+                idx = kid.child("Name").payload
+                bounds = [extract_expr(_descend_subscript(sc))
+                          for sc in kid.children_named("Scalar")]
+                if len(bounds) != 2:
+                    raise UnsupportedConstruct("do-concurrent with a stride is unsupported")
+                controls.append((idx, bounds[0], bounds[1]))
+            elif kid.name == "Scalar" and mask is None:
+                # The scalar-mask-expr (dump: `Scalar -> Logical -> Expr`,
+                # a sibling of the controls).
+                mask = extract_expr(kid.child("Logical").child("Expr"))
+            else:
+                raise UnsupportedConstruct(f"ConcurrentHeader child '{kid.name}'")
         body = extract_block(n.child("Block"))
-        return DoConcurrent(tuple(controls), body)
+        return DoConcurrent(tuple(controls), body, mask)
     if loop.name == "LoopBounds":
         # Plain do (R1119): the dump lists the index and both bounds as
         # sibling Scalar nodes — `Scalar -> Name` for the loop variable,
