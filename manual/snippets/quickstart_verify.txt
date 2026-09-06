@@ -2,5 +2,5 @@ ok [fortran]: QuickstartFtn.lean matches a fresh extraction
 ok [cpp]: QuickstartCpp.lean matches a fresh extraction
 checking the proofs: `lake build` in …/lean/groundline ...
     ⋮ (the axioms audit replays here — one line per declaration)
-Build completed successfully (801 jobs).
+Build completed successfully (806 jobs).
 ok [lean]: every theorem in the project checked

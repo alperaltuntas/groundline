@@ -113,6 +113,55 @@ def meridional_BT_mass_flux {κ : Type*} (ks : List κ) (v h_in h_S h_N : κ →
       vhbt_val + vh_val) vhbt_val
   vhbt_val
 
+/-- Generated from ParallelFor lambda 1 of `set_zonal_BT_cont` in `submodules/infra/TIM/mom/cpp/mom_continuity_ppm.cpp` (clang JSON AST), as a column kernel over (i, j).
+Outputs `(FA_u_W0, FA_u_E0, FA_u_WW, FA_u_EE, uBT_WW, uBT_EE)` — the `intent(inout)` arguments, modeled functionally over ℝ. -/
+def set_zonal_BT_cont {κ : Type*} (ks : List κ) (u h_in h_W h_E : κ → ℝ) (FA_u_W0 FA_u_E0 FA_u_WW FA_u_EE uBT_WW uBT_EE du0 dt dxCu dy_Cu IareaT IdxT : ℝ) (visc_rem : κ → ℝ) (visc_rem_max : ℝ) (do_I : Bool) (por_face_areaU h_in_ip1 h_W_ip1 h_E_ip1 : κ → ℝ) (IareaT_ip1 IdxT_ip1 : ℝ) (vol_CFL : Bool) : ℝ × ℝ × ℝ × ℝ × ℝ × ℝ :=
+  let Idt := 1 / dt
+  let min_visc_rem := 0.1
+  let CFL_min := 1e-6
+  let active := (do_I)
+  let du_CFL := (CFL_min * Idt) * dxCu
+  let duR := min (0) (du0 - du_CFL)
+  let duL := max (0) (du0 + du_CFL)
+  let FAmt_L := 0
+  let FAmt_R := 0
+  let FAmt_0 := 0
+  let uhtot_L := 0
+  let uhtot_R := 0
+  if active then
+    let (duR, duL) := ks.foldl (fun (duR, duL) k =>
+        let visc_rem_lim := max (visc_rem k) (min_visc_rem * visc_rem_max)
+        if visc_rem_lim > 0 then
+          if u k + duL * visc_rem_lim < du_CFL * visc_rem k then
+            (if u k + duR * visc_rem_lim > (-du_CFL) * visc_rem k then (-(u k + du_CFL * visc_rem k)) / visc_rem_lim else duR, (-(u k - du_CFL * visc_rem k)) / visc_rem_lim)
+          else (if u k + duR * visc_rem_lim > (-du_CFL) * visc_rem k then (-(u k + du_CFL * visc_rem k)) / visc_rem_lim else duR, duL)
+        else (duR, duL)) (duR, duL)
+    let (FAmt_0, FAmt_L, FAmt_R, uhtot_L, uhtot_R) := ks.foldl (fun (FAmt_0, FAmt_L, FAmt_R, uhtot_L, uhtot_R) k =>
+        let u_L := u k + duL * visc_rem k
+        let u_R := u k + duR * visc_rem k
+        let u_0 := u k + du0 * visc_rem k
+        let uh_0 := (flux_elem_point u_0 (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 (visc_rem k) dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).1
+        let duhdu_0 := (flux_elem_point u_0 (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 (visc_rem k) dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).2
+        let uh_L := (flux_elem_point u_L (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 (visc_rem k) dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).1
+        let duhdu_L := (flux_elem_point u_L (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 (visc_rem k) dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).2
+        let uh_R := (flux_elem_point u_R (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 (visc_rem k) dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).1
+        let duhdu_R := (flux_elem_point u_R (h_in k) (h_in_ip1 k) (h_W k) (h_W_ip1 k) (h_E k) (h_E_ip1 k) 0 0 (visc_rem k) dy_Cu IareaT IareaT_ip1 IdxT IdxT_ip1 dt vol_CFL (por_face_areaU k)).2
+        (FAmt_0 + duhdu_0, FAmt_L + duhdu_L, FAmt_R + duhdu_R, uhtot_L + uh_L, uhtot_R + uh_R)) (FAmt_0, FAmt_L, FAmt_R, uhtot_L, uhtot_R)
+    let FA_0 := FAmt_0
+    let FA_avg := FAmt_0
+    let FA_avg := if (duL - du0) ≠ 0 then uhtot_L / (duL - du0) else FA_avg
+    let (FA_avg, FA_0) := if FA_avg > max (FA_0) (FAmt_L) then (max (FA_0) (FAmt_L), FA_0) else if FA_avg < min (FA_0) (FAmt_L) then (FA_avg, FA_avg) else (FA_avg, FA_0)
+    let FA_u_W0 := FA_0
+    let uBT_WW := if |FA_0 - FAmt_L| ≤ 1e-12 * FA_0 then 0 else (1.5 * (duL - du0)) * ((FAmt_L - FA_avg) / (FAmt_L - FA_0))
+    let FA_0 := FAmt_0
+    let FA_avg := FAmt_0
+    let FA_avg := if (duR - du0) ≠ 0 then uhtot_R / (duR - du0) else FA_avg
+    let (FA_avg, FA_0) := if FA_avg > max (FA_0) (FAmt_R) then (max (FA_0) (FAmt_R), FA_0) else if FA_avg < min (FA_0) (FAmt_R) then (FA_avg, FA_avg) else (FA_avg, FA_0)
+    if |FAmt_R - FA_0| ≤ 1e-12 * FA_0 then
+      (FA_u_W0, FA_0, FAmt_L, FAmt_R, uBT_WW, 0)
+    else (FA_u_W0, FA_0, FAmt_L, FAmt_R, uBT_WW, (1.5 * (duR - du0)) * ((FAmt_R - FA_avg) / (FAmt_R - FA_0)))
+  else (0, 0, 0, 0, 0, 0)
+
 end
 
 end Groundline.GeneratedCpp

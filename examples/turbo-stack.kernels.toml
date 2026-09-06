@@ -169,3 +169,9 @@ cpp = { source = "mom_continuity_ppm.cpp", function = "meridional_BT_mass_flux",
 columns = ["j", "i"]
 assume = { local_specified_bc = false, obc_in_row = false }
 ignore_calls = ["cpu_clock_begin", "cpu_clock_end"]
+
+[[kernel]]
+name = "set_zonal_bt_cont"
+fortran = { dump = "MOM6/MOM_continuity_PPM.o_ptree", subroutine = "set_zonal_bt_cont" }
+cpp = { source = "mom_continuity_ppm.cpp", function = "set_zonal_BT_cont", parallel_for = 1, columns = ["i", "j"] }
+columns = ["j", "i"]

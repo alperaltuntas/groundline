@@ -9,6 +9,7 @@ import Groundline.RatioMax
 import Groundline.FluxElem
 import Groundline.ContinuityConvergence
 import Groundline.BtMassFlux
+import Groundline.SetZonalBtCont
 import Groundline.QuickstartEquiv
 
 set_option linter.style.header false
@@ -98,6 +99,15 @@ no `sorryAx`. The output is checked by eye in the build log.
 #print axioms Groundline.GeneratedCpp.meridional_BT_mass_flux
 #print axioms Groundline.meridionalBtMassFlux_column_equiv
 #print axioms Groundline.meridionalBtMassFlux_kernel_equiv
+
+-- Tier B, stage B2 (docs/COLUMN_KERNELS.md §5): masks, several fold states,
+-- component outputs; the theorem carries the output permutation.
+#print axioms Groundline.GeneratedFtn.set_zonal_bt_cont
+#print axioms Groundline.GeneratedCpp.set_zonal_BT_cont
+#print axioms Groundline.btContCppOrder
+#print axioms Groundline.btContCppOrder_mk
+#print axioms Groundline.setZonalBtCont_column_equiv
+#print axioms Groundline.setZonalBtCont_kernel_equiv
 
 -- The quickstart pair (examples/quickstart/kernels.toml)
 #print axioms Quickstart.GeneratedFtn.scale_clip_acc
