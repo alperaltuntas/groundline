@@ -163,11 +163,25 @@ An early return refuses at extraction; a path that falls off the end refuses
 in functionalize (the result is unassigned there); a non-void function that
 also has `Real &` parameters refuses.
 
-**Locals.** `Real const x = e;` is a `let`. A bare declaration `Real x;`
-(or several, `Real a, b;`) only records the local: its later assignments
-arrive as ordinary statements and are threaded by functionalize like any
-other write, and a read before the first assignment refuses there. A
+**Locals.** `Real const x = e;` is a `let`, and so is `bool const p = e;`
+(a Bool-valued expression — a comparison, a flag read). A bare declaration
+`Real x;` (or several, `Real a, b;`) only records the local: its later
+assignments arrive as ordinary statements and are threaded by functionalize
+like any other write, and a read before the first assignment refuses there. A
 list/direct initializer refuses.
+
+**Literals are printed from their source spelling.** clang's
+`FloatingLiteral.value` is the parsed number printed back — exact for a
+dyadic literal (`3.0_rt` → `3`) but, for the long-double literals every
+`_rt` suffix produces, an approximation with digits the source never wrote
+(`0.1_rt` → `0.100000000000000000001`). The frontend reads each literal's
+token from the source file at the JSON node's byte offset (`range.begin.
+offset`, `tokLen`), tracking clang's location conventions — a `file` key
+appears only when it changes, a macro-expanded token carries a `spellingLoc`
+and an `expansionLoc` — cross-checks the token against `value` to double
+precision, and refuses a literal it cannot recover (including one that a
+macro produced). The printer then canonicalizes the spelling (`1.0e-6` →
+`1e-6`) so both languages' spellings of one value are one Lean term.
 
 **Column mode** (`parallel_for = N`, `columns` on the cpp side): the body
 of the N-th `ParallelFor` lambda of the function, whose named `int`
@@ -176,8 +190,14 @@ array references with the lambda's indices and the loop variable as
 subscripts — a trailing literal `0`, AMReX's unit third extent for 2-D
 fields, is dropped; `for (int k = lo; k <= hi; ++k)` becomes a plain `Do`;
 `+=` an assignment; a call statement a `CallStmt` with bare `Real &` receivers
-as outputs; a member read on a const struct reference a component read.
-Statements outside the lambda are not modeled: a captured function-scope
+as outputs; a member read on a const struct reference a component read;
+`x(i,j,0) != 0` on an `Array4<const int>` parameter a per-cell flag read (the
+integer array is admitted in no other shape — the read *is* the Bool).
+Statements outside the lambda are not modeled, with one exception: `const
+Real` locals declared at the function's top level from an expression
+(`const Real Idt = 1.0_rt / dt;`) and captured by the lambda are hoisted
+into the model in declaration order, as the Fortran's pre-loop assignments
+are — a non-const captured Real refuses. Any other captured function-scope
 variable may only be a loop bound or an assumed flag (whose guarded blocks
 are pruned, flag names matched case-insensitively). The
 [column pass](../concepts/column-kernels.md) then runs with the columns
@@ -195,9 +215,11 @@ kernel needs them.
 **Format notes worth knowing** (from the original survey, all pinned):
 `amrex::Math::abs`'s callee carries no namespace qualifier in the JSON
 (acceptance is on the referenced declaration's name, found through amrex's
-`using std::abs`; `amrex::max` likewise surfaces as the FunctionDecl `max`); `FloatingLiteral.value` is the shortest round-trip form
-(`3.0_rt` → `'3'`), which lands on the same Lean numerals as the Fortran
-side; `else if` arrives as an `IfStmt` in the else slot and is kept nested,
+`using std::abs`; `amrex::max` likewise surfaces as the FunctionDecl `max`); `FloatingLiteral.value` is *not* the spelling for long-double
+literals (see above — the token is read from the source instead);
+`else if` arrives as an `IfStmt` in the else slot and is **flattened** into
+the branch list (an else holding exactly one `if` *is* an elseif) so both
+frontends yield the same join shape — before 2026-09-05 it was kept nested,
 which functionalize turns into the same if-expression chain as flang's
 elseif blocks.
 

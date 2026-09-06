@@ -6,14 +6,22 @@ shapes, simplify nothing. This page is the mechanical detail.
 
 ## Literals
 
-- A Fortran real literal keeps its source spelling, normalized only to Lean
-  numeral syntax: a trailing zero-fraction is dropped (`3.0` → `3`,
-  `12.0` → `12`), anything else prints as spelled (`0.5` → `0.5`). The
-  spelling comes from the dump's structured leaf, never from unparse text.
-- clang reports `FloatingLiteral` values in shortest round-trip form
-  (`3.0_rt` → `3`, `0.5_rt` → `0.5`), which lands on the same numerals from
-  the other side — cross-language spelling fidelity through a different
-  route.
+- A real literal keeps its source spelling, normalized only to one canonical
+  Lean numeral per value-as-written: a trailing zero-fraction is dropped
+  (`3.0` → `3`, `12.0` → `12`), a leading `.` gains its zero (`.5` → `0.5`),
+  and an exponent spelling is normalized — mantissa trailing zeros, the
+  letter (`E`, Fortran's `d`), the sign and leading zeros of the exponent —
+  so that `1e-6`, `1.0e-6`, `1E-06` and `1.d-6` all print `1e-6` (Lean's
+  `1e-6` and `1.0e-6` are *different terms*, and a proof by unfolding needs
+  the same one from both sides). Anything else prints as spelled (`0.5` →
+  `0.5`, `1.5` → `1.5`). The value is never touched.
+- The Fortran spelling comes from the dump's structured leaf, never from
+  unparse text. The C++ spelling is the **source token** read at the JSON
+  node's byte offset — clang's `FloatingLiteral.value` is the parsed number
+  printed back, exact for dyadic literals (`3.0_rt` → `3`) but an
+  approximation for long-double literals (`0.1_rt` →
+  `0.100000000000000000001`); a literal whose token cannot be recovered
+  refuses ([frontends](frontends.md)).
 - Integer literals print as spelled.
 
 ## Operators, precedence, parenthesization
@@ -51,7 +59,9 @@ Parentheses appear in exactly three cases:
 ## Functional forms
 
 - `Let` → `let name := value` on its own line, body continuing at the same
-  indent.
+  indent; `LetPat` → `let (a, b) := value` — a fold's several states, or the
+  locals of a join that read each other's prior values, whose value is then
+  an `if` over `TupleExpr` branches `(x, y)`.
 - `IfExpr` → multi-line `if cond then / else` blocks; an `IfExpr` in the else
   slot chains as `else if … then` (mirroring elseif chains); a tuple in the
   else slot compacts to `else (a, b)`.
@@ -82,7 +92,10 @@ banked primitive as `flux_elem (u k) (h k) … 0 0 1 dy_cu …` with compound
 arguments parenthesized; a call output as a projection `(flux_elem …).1`;
 a map as `let uh := fun k => …`; a fold as `ks.foldl (fun uhbt k => …) init`,
 on one line when the step is a bare expression and otherwise with the step's
-`let`s on their own lines and the closing `) init` after the last.
+`let`s on their own lines and the closing `) init` after the last; a fold
+with several states as `let (a, b) := ks.foldl (fun (a, b) k => …) (a₀, b₀)`
+— a pattern-matching lambda and a destructuring `let`. Locals may be real or
+logical (a `let` of a Bool-valued expression); integer locals refuse.
 
 The "Outputs" line **derives from the actual intents** of the kernel's output
 parameters (deduplicated, declaration order) — it used to hardcode

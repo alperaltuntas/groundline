@@ -14,6 +14,185 @@
 
 ---
 
+## 2026-09-05 (Tier B, B2) — `set_zonal_BT_cont`: masks, several fold states, component outputs — and three latent holes closed on the way
+
+**What was banked.** `set_zonal_bt_cont` (MOM_continuity_PPM.F90, the whole
+subroutine as a column kernel over `(j, I)`) against the `ParallelFor(bx2d)`
+lambda of `MOM::set_zonal_BT_cont` — the fourteenth manifest entry, the
+third column kernel, `lean/groundline/Groundline/SetZonalBtCont.lean`. Per
+column: two test velocity corrections chosen by a masked fold with a
+conditional step and two state variables; the face areas and transports of
+three test velocities by a masked fold with five state variables and three
+`flux_elem` calls per layer; a tail that fits `FA_u_W0 / FA_u_WW / uBT_WW`
+and their easterly twins into six component arrays of the `intent(inout)`
+`BT_cont`. The column lemma is `cases do_I <;> simp only [the two defs,
+apply_ite btContCppOrder, btContCppOrder_mk, fluxElem_point_equiv, neg_mul,
+neg_div, Bool.false_eq_true, ↓reduceIte]`; the kernel level lifts through
+`foldSeq` over the columns as in B1, with a six-tuple per-column state.
+Axioms audit clean.
+
+**Semantics decisions implemented (all in the accepted design note §6, or
+stated here).**
+
+- *Masks* (§6 item 4). A `do concurrent (I=…, do_I(I,j))` mask is scalarized
+  in the nest's context and the body runs under it: a fold step becomes
+  `if do_i then step else state`, per-column statements a guarded block, and
+  a masked **map** refuses (skipped cells stay unwritten; `fun k => …` has no
+  way to say so). The Fortran masks each layer step; the C++ tests
+  `active = (do_I(i,j,0) != 0)` once and puts both loops and the tail under
+  `if (active)`. The proof is a case split on the Bool — arithmetic-free.
+- *Row scratch* — not in the note; stated and implemented here. The
+  Fortran's `duL(I)`, `FAmt_L(I)`, `uhtot_R(I)`, … are 1-D locals indexed by
+  `I` alone under the plain `do j`. A **local** array indexed plainly by a
+  strict subset of the column indices is a per-column scalar. Sound because
+  (a) it is a local — nobody outside observes the cells the columns share
+  along `j`; (b) the omitted index is bound by a plain, sequential loop (the
+  same scratch under a `do concurrent (j)` is a race in the source and
+  refuses); (c) the only way a value could flow from one column to another
+  through the shared cell is a read before the column body wrote it, and
+  functionalize refuses exactly that (`fold state 'acc' is read before it is
+  assigned` — pinned). The C++ has plain lambda locals; both sides print
+  `let duL := …`.
+- *Several fold states.* `FoldStmt` always carried a tuple; functionalize
+  and the printer now bind it: `let (duR, duL) := ks.foldl (fun (duR, duL) k
+  => …) (duR, duL)` — a pattern-matching lambda over the state tuple, a
+  destructuring `let` (new `LetPat` node) for the result. Lean elaborates
+  both to `match`; `simp` reduces a match on a pair to projections (structure
+  eta), so the two sides meet as `x.1`, `x.2` terms.
+- *Column-level `if`* (the tail under `if (do_I)`, the C++ `if (active) {
+  for k … }`): branches may hold per-column statements and whole k-nests;
+  functionalize joins them as anywhere else.
+- *Component-array outputs* (rule B for outputs). `BT_cont%FA_u_W0(I,j) =
+  FA_0` on an `intent(inout)` derived-type dummy, indexed exactly by the
+  columns, outside any k-loop, becomes a synthesized `out` parameter named
+  after the component. Reads of such a component still refuse (the base is
+  not `intent(in)`), so an output component is write-only and its incoming
+  value is never read. The Fortran def's outputs come in first-write order
+  `(W0, WW, uWW, E0, EE, uEE)`, the C++ def's in parameter order `(W0, E0,
+  WW, EE, uWW, uEE)`; the theorem carries the permutation `btContCppOrder`.
+- *C++ surface:* a per-cell flag `do_I(i,j,0) != 0` on an `Array4<const
+  int>` is admitted **only in that shape** — the read *is* the Bool, the
+  integer never appears as a value (`!= 1` refuses: "read as a value");
+  `bool`/`const bool` locals are `let`s of Bool-valued expressions, in point
+  kernels too (the join-locals fixture's `refuse_bool_local` became
+  `bool_local_point`; its Fortran twin `logical_local` likewise flipped from
+  a printer refusal to a supported form); `const Real` **prologue locals** of
+  the enclosing function (`const Real Idt = 1.0_rt / dt;`) captured by the
+  lambda are hoisted into the model, in declaration order, as the Fortran's
+  own pre-loop assignments are — a non-const captured Real refuses (its
+  value at capture is not its declaration); C++ `else if` is flattened into
+  the branch list, the IR flang's `ElseIfBlock` already yields (below).
+- *Locality specs* (`local(x)` etc.) on `do concurrent` refuse until a
+  kernel carries one; MOM6's `DO_LOCALITY(local(…))` macro expands to
+  nothing in this build (no `LocalitySpec` node anywhere in the dump).
+
+**Three latent holes, found because this kernel exercised them.**
+
+1. *The mask was silently dropped.* `_extract_do` walked
+   `ConcurrentHeader`'s `ConcurrentControl` children and nothing else; a
+   `scalar-mask-expr` (dump: a `Scalar -> Logical -> Expr` **sibling** of the
+   controls) was never seen, so a masked nest would have been modeled
+   unmasked — a wrong model, not a refusal. No banked kernel had a mask, so
+   nothing banked was affected. Now: parsed into `DoConcurrent.mask`; the
+   point tier refuses it (`masked_point` fixture); the column pass admits it
+   as above; any other header child refuses.
+2. *Variable capture in functionalize.* An output's pending value is a
+   symbolic expression over the names in scope, printed where the path
+   materializes it. `BT_cont%FA_u_W0(I,j) = FA_0 ; … ; FA_0 = FAmt_0` made
+   the output read the *second* `FA_0` — the first extraction of this
+   kernel printed exactly that, and the C++ side, with the same shape, would
+   have printed the same wrong thing, and the theorem would have *held*. The
+   same hazard sat in the join: merged locals are emitted as `let`s in
+   first-assignment order, each value speaking of the bindings *before* the
+   IF, so `then: w = u ; else: v = w` printed `let w := …; let v := if c
+   then v else w` with `w` already re-bound; and `if (FA_avg > max(FA_0,
+   FAmt_L)) then FA_avg = … elseif (…) then FA_0 = FA_avg endif`, whose two
+   locals read each other's prior values, cannot be sequenced as `let`s at
+   all. Fix, in three parts: (a) before any `let` shadows a name, every
+   pending value of the path's outputs (or fold states) that mentions it is
+   let-bound under its own name first (`let fa_u_w0 := fa_0`), recursively;
+   (b) a join's `let`s are emitted only when no other pending value mentions
+   the name, in first-assignment order among the eligible; (c) locals that
+   mention each other are bound together by one destructuring `let (fa_avg,
+   fa_0) := if c₁ then (…, …) else if c₂ then (…, …) else (…, …)` — every
+   right-hand side evaluated before any name changes (new `TupleExpr` node).
+   **Regeneration left every existing def byte-identical**, so no banked
+   theorem ever rested on a captured value; the hazard was real but latent.
+   Pinned on hand-built kernels in `tests/test_functionalize_capture.py`.
+3. *clang's literal `value` is not the spelling.* The JSON reports the parsed
+   float printed back — for a long-double literal (every `_rt` literal) an
+   approximation with its own digits: `0.1_rt` → `0.100000000000000000001`,
+   `1.0e-6_rt` → `1.00000000000000000004E-6`. Printing that into an ℝ model
+   would state a value the source never wrote. Every literal banked so far
+   was dyadic (`0`, `0.5`, `1.5`, `6`), which prints exactly, so nothing
+   generated was wrong — but this kernel's `0.1_rt`, `1.0e-6_rt`,
+   `1.0e-12_rt` would have been. The frontend now reads each
+   `FloatingLiteral`'s **source token** at the JSON node's byte offset and
+   `tokLen` (tracking clang's elided `file` keys and, for macro-expanded
+   tokens, `expansionLoc` for the file — a literal that is itself
+   macro-produced gets no spelling and refuses), cross-checks it against
+   `value` to double precision, and refuses a literal without a recoverable
+   spelling. The printer canonicalizes exponent spellings so `1e-6` (Fortran)
+   and `1.0e-6` (C++) print as one Lean term (`1e-6`; they are *different*
+   terms otherwise).
+
+Also fixed: the manifest loader crashed (`TypeError`, a conditional `raise`
+of `None`) on a C++-only `parallel_for` entry — the shape every C++ refusal
+fixture has.
+
+**Dump-shape notes (Q1 ledger).** flang: the mask is a `Scalar` sibling of
+the `ConcurrentControl`s under `ConcurrentHeader`; `Concurrent` has no other
+children in this build. clang: a node's `range.begin` carries `file` only
+when it differs from the previously printed location; a macro-expanded token
+has `spellingLoc` (the macro's file) and `expansionLoc` (where it landed);
+`includedFrom` decorates the first location in an included file; the
+`AMREX_GPU_HOST_DEVICE` macro makes the first location of every point
+kernel in the header a `spellingLoc` in `AMReX_Extension.H`.
+
+**Proof notes.** The permutation needs `apply_ite btContCppOrder`: the
+Fortran tail is an `if` of two six-tuples, and `btContCppOrder (if c then
+t₁ else t₂)` reduces (by structure eta) to a tuple of projections of the
+`if`, not to an `if` of tuples — the C++ shape. Debugging that took a
+detour: Lean's pretty printer gives up on the zeta-expanded goal ("failed to
+pretty print expression"), so the localization came from a *normalized text
+diff of the two generated defs* (lowercase, callee names unified, the two
+known rewrites applied) — which showed only the mask placement, the `active`
+alias and the output order differing, i.e. no modeling mismatch, and pointed
+at the permutation. Worth remembering as a technique. The fixture pair, with
+identical output order, closed with the plain simp set — the control that
+made the diagnosis quick.
+
+**Float-readiness ledger additions.** `neg_div` (`(-(x)) / v = -((x) / v)`,
+IEEE-exact: negation is exact and rounding is sign-symmetric), `apply_ite`
+and the Bool case split (representation only, no arithmetic), and the
+literal canonicalization (spelling only, same value).
+
+**Considered and ruled out.** Eager `let`-binding of every output assignment
+would remove the capture hazard by construction but re-shape all fourteen
+generated defs (and the by-eye audit of each); the lazy shield changes no
+existing def. Admitting `local()` locality specs: harmless (the model binds
+locals per iteration) but unneeded — refused until a kernel carries one.
+Per-k masks (`do_I(I,j,k)`) on folds: would be `if m k then …`, sound, but
+nothing needs it; the mask is scalarized in the nest context, so it would
+work today — on a map it still refuses.
+
+**Fixtures.** `tests/f90/test_kernel_bt_cont.f90` (supported `bt_cont`;
+refusals `masked_map`, `scratch_read_first`, `scratch_racing`,
+`comp_write_in_k`, point-tier `masked_point`),
+`tests/cpp/test_kernel_bt_cont.cpp` (`bt_cont`; `refuse_flag_value`,
+`refuse_nonconst_capture`); `tests/test_column.py::TestBtContFixture`,
+`tests/test_functionalize_capture.py`. Refusal sites: 187 (from 177) across
+the five trusted-base modules. Suite: 288 tests with the toolchain (from 263).
+
+**Next.** B3 — the j-body of `zonal_mass_flux`: `present(x)` / `.p !=
+nullptr` as Bool inputs, the conditional-init running max and its lemma,
+`ratio_max` as a function callee inside expressions, several folds in
+sequence under per-column `if`s. Then the meridional twin of B2
+(`set_meridional_BT_cont`, when the PR carries it) is a manifest entry, not
+a construct.
+
+---
+
 ## 2026-09-05 (Tier B, B1) — The first column kernels: the barotropic mass fluxes, as folds calling a banked primitive
 
 **The design, accepted.** `docs/COLUMN_KERNELS.md` went in front of the user

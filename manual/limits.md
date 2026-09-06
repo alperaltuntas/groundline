@@ -91,15 +91,17 @@ demands it — fixture first, refusal edges pinned — not before.
 ## Masks and per-cell guards
 
 Many kernels in the case-study code base guard their arithmetic per cell
-(`if (G%mask2dT(i,j) > 0.) …`) or branch on wet/dry state. A masked point kernel is still point-local,
-so the iteration schemas should extend — but the mask array enters the model
-as a per-cell input with its own rule-B-like story (a component array of the
-grid type, read at exactly the loop indices), and the generated defs grow a
-guard shape the printer and the by-eye audit must handle. Scalar logical
-*arguments* as guards (`if (vol_CFL)`) are in since 2026-09-05, as `Bool`
-inputs; per-cell mask *arrays* are the open part — refused today by the
-array-index gate (the mask subscripts `(i,j)` don't match a 3-D nest's
-indices).
+(`if (G%mask2dT(i,j) > 0.) …`) or branch on wet/dry state. In **column
+kernels** masks are in since 2026-09-05 (B2): a `do concurrent` mask, or a
+per-column `if` on a logical array, is a per-column `Bool` input and the body
+runs under it ([Column kernels](concepts/column-kernels.md)); the C++'s
+`do_I(i,j,0) != 0` is the same Bool. What remains open is the **point
+tier**: a masked point kernel is still point-local, so the iteration schemas
+should extend — but the skipped iterations leave their cells unwritten, which
+the pointwise model (a total function per cell) cannot say without reading
+the cell's old value, and a masked `do concurrent` **refuses** there
+(pinned). Scalar logical *arguments* as guards (`if (vol_CFL)`) are in for
+every tier as `Bool` inputs.
 
 ## More C++ surface
 
@@ -137,8 +139,12 @@ same generated defs behind a different binder type.
 
 - *The printer's tables* (`lean_printer.py`): the carrier type (`_LEAN_TYPE`),
   the operator spellings (`_BIN`, `_CMP`), the literal normalization
-  (`_real_lit`), the intrinsic spellings (`abs`, `min`, `max`). Swapping the
-  carrier touches these and nothing in the frontends or passes.
+  (`_real_lit` — spelling only: `1e-6` and `1.0e-6` become one numeral, the
+  value is untouched), the intrinsic spellings (`abs`, `min`, `max`).
+  Swapping the carrier touches these and nothing in the frontends or passes.
+  A float model would additionally *want* what the C++ frontend now does for
+  every literal: print the source spelling, never clang's re-printed
+  long-double value.
 - *Every non-`rfl` proof step.* A `rfl` point lemma says the two sides are the
   same expression, hence the same float computation modulo the compiler.
   Every other tactic marks an algebraic identity the ℝ proof leaned on — a
@@ -160,6 +166,11 @@ same generated defs behind a different binder type.
       folds coincide term for term because both sides sum the layers in the
       same order, so this is float-exact as well (a `+` in the same order
       rounds the same way).
+    - `SetZonalBtCont.lean`: `neg_mul` again, and `neg_div` — `(-(x)) / v =
+      -((x) / v)`, the same precedence difference under a division;
+      IEEE-exact for the same reason. `apply_ite` (the output permutation
+      pushed through the tail's `if`) and the `cases` on the mask are
+      representation only.
 - *Lean's ℝ conventions.* `x / 0 = 0` in Lean; IEEE gives ±∞ or NaN. Every
   `/` in a generated def is a site a float model must speak about. Today:
   `ppm_limit_pos`'s `scale` (guarded — `curv > 0` makes the denominator

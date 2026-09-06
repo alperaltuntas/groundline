@@ -111,6 +111,54 @@ declared effect-free.
 A specialization is honest only when loud; nothing is pruned that the
 manifest did not name.
 
+## Masks, row scratch, several states, component outputs
+
+The second stage (`set_zonal_BT_cont`, 2026-09-05) added the shapes an
+orchestration routine's *inner* logic needs:
+
+- **Masks.** `do k ; do concurrent (I=ish-1:ieh, do_I(I,j))` runs each layer
+  step only where the flag holds. The mask is a per-column `Bool` input and
+  the body runs under it: in a fold the step becomes `if do_i then step else
+  (duR, duL)`; per-column statements become a guarded block; a masked *map*
+  refuses (skipped cells stay unwritten, which `fun k => …` cannot say). The
+  C++ tests `active = (do_I(i,j,0) != 0)` once and wraps both loops and the
+  tail in `if (active)`. Equivalence is a case split on the Bool.
+- **Row scratch.** `duL(I)`, `FAmt_L(I)`, … are 1-D locals indexed by `I`
+  alone under the plain `do j`. A *local* array indexed by a strict subset
+  of the column indices is a per-column scalar — sound because nobody
+  outside observes the cells the columns share along `j`, the omitted index
+  is bound by a plain (sequential) loop, and a value could only cross from
+  one column to another through a read the column body has not yet written,
+  which [functionalize](functionalize.md) refuses. The same scratch under a
+  `do concurrent (j)` is a race in the source and refuses.
+- **Several fold states.** A fold that accumulates five totals at once binds
+  them together:
+
+  ```lean
+  let (FAmt_0, FAmt_L, FAmt_R, uhtot_L, uhtot_R) :=
+    ks.foldl (fun (FAmt_0, FAmt_L, FAmt_R, uhtot_L, uhtot_R) k =>
+        … (FAmt_0 + duhdu_0, FAmt_L + duhdu_L, …)) (FAmt_0, FAmt_L, FAmt_R, uhtot_L, uhtot_R)
+  ```
+
+  A pattern-matching lambda over the state tuple and a destructuring `let`
+  for the result. Lean elaborates both to `match`; `simp` reduces a match on
+  a pair to projections, so the two sides meet as the same term.
+- **A per-column `if`.** The tail under `if (do_I(I,j))` on one side and
+  `if (active) { for k … ; tail }` on the other: branches may hold
+  per-column statements and whole k-nests, and functionalize joins them as
+  anywhere else.
+- **Component outputs.** `BT_cont%FA_u_W0(I,j) = FA_0` writes a component
+  array of an `intent(inout)` derived-type dummy at the column cell — rule B
+  for *outputs*: a synthesized `out` parameter named after the component.
+  The C++ writes six separate `Array4`s. The Fortran def's outputs come in
+  first-write order, the C++ def's in parameter order, and the theorem
+  carries the permutation (`btContCppOrder`).
+
+Two rewrites in that proof carry language semantics — `neg_mul` and
+`neg_div`, the unary-minus precedence Fortran and C++ disagree on — and are
+[float-exact](../limits.md#floating-point-a-readiness-ledger). Everything
+else is unfolding and the case split.
+
 ## The C++ address
 
 A column kernel's C++ side is the body of a lambda: `parallel_for = N`
@@ -122,8 +170,18 @@ AMReX's unit third extent for 2-D fields), `h_in(i+1,j,k)` a stencil input;
 `for (int k = kmin; k <= kmax; ++k)` is the fold or map; `+=` is an
 assignment; a call statement with `Real &` receivers is a call to a banked
 primitive; `CS.vol_CFL` is a member read on a const struct reference — a
-`Bool` input. Statements *outside* the lambda are not modeled: a captured
-function-scope variable may only be a loop bound or an assumed flag.
+`Bool` input; `do_I(i,j,0) != 0` on an `Array4<const int>` is a per-cell
+flag — the read *is* the Bool, and the integer array is admitted in no other
+shape; `const bool active = …` is a `let`. Statements *outside* the lambda
+are not modeled, with one exception: `const Real` locals of the enclosing
+function that the lambda captures (`const Real Idt = 1.0_rt / dt;`) are
+hoisted into the model in declaration order — the C++ computes before the
+launch what the Fortran computes before its loops. Any other captured
+function-scope variable may only be a loop bound or an assumed flag; a
+non-const captured Real refuses. Real literals are printed from their
+**source spelling**, read at the JSON node's byte offset — clang's reported
+`value` is the parsed long double printed back (`0.1_rt` becomes
+`0.100000000000000000001`), which is not what the source says.
 
 ## Licenses
 
@@ -141,8 +199,11 @@ is modeled as `foldSeq` over the column enumeration and the
 Refused today, each pinned by a fixture: a k-loop that writes both per-k
 cells and per-column state (a **scan** — `zonal_flux_adjust`'s Newton
 iteration lives here); a read of a per-k array at an offset in `k` (a
-k-recurrence); a fold with several state variables (next: `set_zonal_BT_cont`);
-masks on `do concurrent`; a call neither banked nor declared ignorable;
-statements at a partial column level (inside `do concurrent (j)` but outside
-the `I` nests). The design that this page implements, with what the next
-stages add, is `docs/COLUMN_KERNELS.md`.
+k-recurrence); a masked map; a mask on a nest that binds only some of the
+column indices; a row scratch read before any column wrote it, or shared by
+`do concurrent` columns; a component write inside a k-loop, or on a base
+that is not an `intent(inout)` derived-type dummy; a call neither banked nor
+declared ignorable; statements at a partial column level (inside `do
+concurrent (j)` but outside the `I` nests); `do concurrent` locality specs.
+The design that this page implements, with what the next stage (B3) adds,
+is `docs/COLUMN_KERNELS.md`.

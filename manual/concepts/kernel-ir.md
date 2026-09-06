@@ -38,11 +38,13 @@ Expressions (frozen dataclasses, language-neutral):
 | `Call` | intrinsic reference (`abs`; `min`/`max` are printable) |
 | `Cond` | inline conditional expression — created only by [functionalize](functionalize.md)'s join merge, never by a frontend |
 
-| `Slice`, `App`, `Proj`, `Lam`, `Foldl` | the column vocabulary: a bare `:` subscript (whole-array assignment); a per-k array applied at the fold index (`uh k`); a tuple projection (`(f a b).1`); `fun k => …`; `ks.foldl (fun s k => …) s₀` — see [Column kernels](column-kernels.md) |
+| `Slice`, `App`, `Proj`, `Lam`, `Foldl` | the column vocabulary: a bare `:` subscript (whole-array assignment); a per-k array applied at the fold index (`uh k`); a tuple projection (`(f a b).1`); `fun k => …`; `ks.foldl (fun s k => …) s₀` with one or more state variables — see [Column kernels](column-kernels.md) |
+| `TupleExpr` | a tuple value `(a, b)` inside an expression — the branches of a joined `if` whose locals read each other's prior values; created only by functionalize |
 
 Statements: `Assign`, `If` (structured, with elseif branches and an else
-body), `DoConcurrent` (multi-index nest), `Do` (one level of a plain loop,
-no stride); and, for column kernels, `CallStmt` (a call as the frontends see
+body), `DoConcurrent` (multi-index nest, with its optional scalar mask —
+refused by the point tier, admitted by the column pass), `Do` (one level of
+a plain loop, no stride); and, for column kernels, `CallStmt` (a call as the frontends see
 it), `CallBind` (the same call resolved against a banked callee), `MapStmt`
 and `FoldStmt` (a k-loop as a map or a fold). A kernel is `Kernel(name, params, locals, body)` with each
 `Param` carrying its declared type (`real`, `integer`, `logical`, a derived

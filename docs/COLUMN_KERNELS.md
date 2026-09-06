@@ -1,19 +1,29 @@
 # Column kernels — design note for Tier B
 
-> **Status:** accepted 2026-09-05; **B1 implemented** the same day (the
-> barotropic mass fluxes; DEVLOG entry). Sections 1–4 describe what now
-> runs, with these implementation notes: (a) the fold/map decision reads
-> the k-loop's *write set* — a scalar local written in the loop is fold state
-> only if it was bound before the loop or is read before written inside it,
-> otherwise a per-iteration temporary; (b) a C++ `Real &` parameter the
-> callee never reads before assigning is reclassified as an output, so a
-> caller may pass an uninitialized receiver; (c) two pruning rules the note
-> did not anticipate were needed and are declared in the manifest like
-> `assume`: `ignore_calls` (timer calls dropped as effect-free) and the
-> automatic elimination of integer locals that only feed loop bounds;
-> (d) flag names are matched case-insensitively on both sides; (e) the user
-> manual's [Column kernels](../manual/concepts/column-kernels.md) page is the
-> present-tense account. Sections 5–6 remain the plan for B2/B3.
+> **Status:** accepted 2026-09-05; **B1 and B2 implemented** the same day
+> (the barotropic mass fluxes; `set_zonal_BT_cont` — DEVLOG entries).
+> Sections 1–4 and the B2 paragraph of §5 describe what now runs, with these
+> implementation notes: (a) the fold/map decision reads the k-loop's *write
+> set* — a scalar local written in the loop is fold state only if it was
+> bound before the loop or is read before written inside it, otherwise a
+> per-iteration temporary; (b) a C++ `Real &` parameter the callee never
+> reads before assigning is reclassified as an output, so a caller may pass
+> an uninitialized receiver; (c) two pruning rules the note did not
+> anticipate were needed and are declared in the manifest like `assume`:
+> `ignore_calls` (timer calls dropped as effect-free) and the automatic
+> elimination of integer locals that only feed loop bounds; (d) flag names
+> are matched case-insensitively on both sides; (e) B2 needed one rule the
+> note did not list — **row scratch**: a *local* array indexed by a strict
+> subset of the column indices under a plain loop over the rest (`duL(I)`
+> under `do j`) is a per-column scalar, sound because a read before the
+> column body writes it refuses in functionalize and a concurrent omitted
+> index refuses as a race; (f) the masked-fold lemma of §4 was not needed as
+> a lemma — a case split on the Bool and `simp` do it; (g) a fold's several
+> states print as a pattern-matching lambda and a destructuring `let`, and
+> the theorem for `set_zonal_BT_cont` carries the permutation between the
+> Fortran's first-write output order and the C++'s parameter order; (h) the
+> user manual's [Column kernels](../manual/concepts/column-kernels.md) page
+> is the present-tense account. B3 in §5 remains the plan.
 
 The point tier (Tier A, complete 2026-09-05) certifies the three primitives of
 TIM PR 36 — `ratio_max`, `flux_elem`, `continuity_convergence_point` — and the

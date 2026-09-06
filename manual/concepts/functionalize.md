@@ -70,6 +70,21 @@ branch read them, dead afterwards); when something does read it, functionalize
 **refuses** — a conservative read scan, so it may refuse spuriously, never
 mismodel. A local read before any assignment at all refuses outright.
 
+Two locals may read *each other's* prior values across the branches —
+`if (FA_avg > max(FA_0, FAmt_L)) then FA_avg = … elseif (FA_avg < min(FA_0,
+FAmt_L)) then FA_0 = FA_avg endif`. No order of `let`s can express that
+(whichever is bound first is read by the other as its *new* value), so such
+locals are bound together by one destructuring `let`, its branches tuples:
+
+```lean
+let (FA_avg, FA_0) := if FA_avg > max (FA_0) (FAmt_L) then (max (FA_0) (FAmt_L), FA_0)
+                      else if FA_avg < min (FA_0) (FAmt_L) then (FA_avg, FA_avg) else (FA_avg, FA_0)
+```
+
+Every right-hand side is evaluated before any name changes — exactly the
+source's semantics. The C++ `else if` is flattened into the branch list at
+extraction, so both frontends yield the same join.
+
 Until 2026-09-05 the join was supported in exactly one shape — a
 single-branch `if` assigning only to outputs, the CW84 kernel's pair of
 guarded assignments — and everything else refused. The generalization was a
@@ -79,6 +94,27 @@ computed after the join reads one of the locals); the old shape is a special
 case of the new rule and the CW84 def came out byte-identical. A trailing
 `if` — nothing after it — keeps the structured if-expression path, so kernels
 without joins are unaffected.
+
+## No pending value is ever captured
+
+An output's value is a symbolic expression over the names in scope, printed
+where the path materializes it. That is only right if none of those names is
+re-bound in between: `BT_cont%FA_u_W0(I,j) = FA_0 ; … ; FA_0 = FAmt_0` must
+not make the output read the second `FA_0`. So before any `let` shadows a
+name, every pending value of the path's outputs (or of a fold's states) that
+mentions it is let-bound under its own name first — `let FA_u_W0 := FA_0` —
+recursively, and the tracked value becomes that reference. A join's `let`s
+obey the same rule: one is emitted only when no other pending value mentions
+its name (the values all speak of the bindings *before* the `if`), in
+first-assignment order among the eligible; the mutually-dependent remainder
+is the destructuring case above.
+
+This discipline was added on 2026-09-05, when `set_zonal_BT_cont` re-assigned
+a local an output had just read. Regenerating every banked def under it
+changed nothing — no existing theorem had rested on a captured value — but
+the first extraction of that kernel had printed one, on both sides alike, and
+the theorem would have held. The hazard is pinned on hand-built kernels in
+`tests/test_functionalize_capture.py`.
 
 ## Column statements
 
@@ -91,11 +127,13 @@ functionalize, all frontend-neutral:
 - a **map** binds each per-layer array its body writes as `let a := fun k =>
   …`, later statements reading `a k`; within the body, later statements see
   the values earlier ones assigned;
-- a **fold** binds its state variable to `ks.foldl (fun s k => step) init`,
-  where the step is the body functionalized with the state variable as its
-  sole output (locals inside are per-iteration `let`s, control flow merges
-  as anywhere else) and `init` is the state's current value. The binding
-  shadows the earlier name, so what follows reads the fold's result.
+- a **fold** binds its state variables to `ks.foldl (fun s k => step) init`,
+  where the step is the body functionalized with the state variables as its
+  outputs (locals inside are per-iteration `let`s, control flow merges as
+  anywhere else) and `init` is the states' current values. One state binds
+  by `let s := …`; several by a destructuring `let (a, b) := ks.foldl (fun
+  (a, b) k => …) (a, b)`. The binding shadows the earlier names, so what
+  follows reads the fold's result.
 
 ## Why this design is easy to trust
 

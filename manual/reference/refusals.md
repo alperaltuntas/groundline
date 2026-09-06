@@ -8,7 +8,7 @@ these sites fails loudly instead of producing a plausible-but-wrong model
 
 The catalog is complete as of this manual's writing — it was compiled by
 `grep -n "raise UnsupportedConstruct"` over the five trusted-base modules (the kernel IR, the two frontends, the printer, the column pass)
-(177 sites), and each entry's message text is greppable in the source. Related
+(187 sites), and each entry's message text is greppable in the source. Related
 but distinct: a malformed *manifest* raises `ManifestError`
 ([manifest rules](manifest.md#general-rules)), and clang/file-system failures
 raise ordinary errors — neither is a subset refusal.
@@ -46,7 +46,9 @@ implies — the early-warning surface for dump-format drift (see
 | an unrecognized action statement (`action statement '<node>'`) | within a body, only assignment and the one-line logical IF statement are modeled |
 | an unrecognized `IfConstruct` child (`IfConstruct child '<node>'`) | if/elseif/else blocks only — no construct names, no other clauses |
 | `do concurrent` with a stride / plain `do` with a stride | a strided box is not the full index box the iteration schemas model |
-| an unsupported intrinsic type (`intrinsic type '<type>'`) or type spec (`type spec '<node>'`) | only `real`, `integer`, `logical`, and (as dummies) derived types are declared into kernels; a logical dummy is a `Bool` input (a bare IF guard), while logical locals and outputs refuse at print |
+| `do concurrent` with locality specs (`local(x)`, `shared`, `reduce`; `locality specs […] is unsupported`) | none is modeled yet — `local` would be harmless (the model binds locals per iteration anyway) but is refused until a kernel carries one; MOM6's `DO_LOCALITY` macro expands to nothing in the dumped build |
+| an unrecognized `ConcurrentHeader` child (`ConcurrentHeader child '<node>'`) | the header holds the controls and at most one scalar mask (a `Scalar -> Logical -> Expr` sibling of the controls — read since 2026-09-05; before that it was silently skipped) |
+| an unsupported intrinsic type (`intrinsic type '<type>'`) or type spec (`type spec '<node>'`) | only `real`, `integer`, `logical`, and (as dummies) derived types are declared into kernels; a logical dummy is a `Bool` input (a bare IF guard), a logical local a `let` of a Bool-valued expression; a logical output refuses at print |
 | an unsupported declaration attribute (`attribute '<node>'`) | `intent`, `dimension` and `optional` are understood (presence is the caller's precondition — a body that could branch on it, via `present()`, refuses anyway); `pointer`, `allocatable`, etc. change semantics the model doesn't carry |
 | a dummy argument with no declaration (`undeclared dummy args`) | a parameter of unknown type/intent cannot be modeled |
 
@@ -79,7 +81,7 @@ implies — the early-warning surface for dump-format drift (see
 | a `return` in a void kernel (`return statement in a void kernel`) / a `return` without a value (`return without a value`) | the return value is the output of a non-void kernel and nothing else |
 | a `return` in non-tail position (`non-tail position (an early return …)`) | statements after it would run on some paths only, which the flat body cannot say; every path must end in exactly one tail return |
 | a declaration that is not a `VarDecl` (`declaration '<kind>'`) | only plain local variables are modeled |
-| a local of any type but `Real`/`double` (optionally const) (`local '<name>': type '<qual>'`) | only real scalars exist in the kernel IR |
+| a local of any type but `Real`/`double`/`bool` (optionally const) (`local '<name>': type '<qual>'`) | real scalars and Bool-valued flags are what the kernel IR models; an integer local would hide truncation |
 | a local with a list/direct initializer (`Real w{e}`) | only the copy-initializer (`= e`, a `let`) and a bare declaration (`Real w;`, assigned later — its assignments are ordinary statements, a read before the first one refuses in functionalize) are modeled |
 | a local declared more than once | C++ block scoping does not map to the flat `Let` model; renaming would break the by-eye audit |
 | an assignment whose target is not a (reference) parameter or a declared local | writes go to outputs or to the kernel's own locals; anything else is outside the state-threading model |
@@ -95,6 +97,8 @@ implies — the early-warning surface for dump-format drift (see
 | binary opcodes outside `+ - * /` and the six comparisons (so `%`, `&&`, bit-ops, …) | unmodeled arithmetic |
 | calls to anything whose referenced declaration is not `abs`, `max` or `min`; calls with no callee or a non-`DeclRefExpr` callee; a wrong arity (`abs` with ≠ 1 argument, AMReX's three-argument `max`/`min`) | same intrinsic policy as Fortran; the binary `amrex::max`/`amrex::min` are the forms the kernels use |
 | user-defined literal with an unexpected shape, a suffix other than `_rt`, or a non-`FloatingLiteral` operand | only AMReX's `_rt` real literals are modeled |
+| a real literal without a recoverable **source spelling** (`without a recoverable source spelling`) — its token not found at the node's byte offset, not a plain decimal literal, disagreeing with clang's value, or produced by a macro | clang's `value` is the parsed long double printed back (`0.1_rt` → `0.100000000000000000001`); only the written spelling is printed, and a literal the frontend cannot read from the source is not modeled |
+| an integer `Array4` read as a value (`read as a value`) — anything but `x(i,j,k) != 0` | the integer array is admitted only as a per-cell flag; in that one shape the read *is* the Bool and the integer never appears as a value (`!= 1` would) |
 | any other expression node (`expression node '<kind>'`) | catch-all |
 
 ## The column pass (`groundline/column.py`)
@@ -106,7 +110,11 @@ the manifest's `columns`; what remains must fit the fold/map model.
 |---|---|
 | a nest that re-binds a column index already bound by an enclosing loop, or runs over the k index before every column index is bound, or has two non-column indices | the nest structure must be columns (possibly across enclosing loops) plus at most one vertical index |
 | a statement at a partial column level (`only nests may appear there`) | inside `do concurrent (j)` but outside the `I` nests nothing is per-column yet |
-| an array indexed by neither the columns nor the columns plus k, or repeating an index, or plainly by a subset (`not indexed by the column indices`) | not a per-column scalar or a per-k array — the two shapes the model has |
+| an array indexed by neither the columns nor the columns plus k, or repeating an index, or a *dummy* indexed plainly by a subset (`not indexed by the column indices`) | not a per-column scalar or a per-k array — the two shapes the model has (a *local* indexed by a strict subset is a row scratch and is admitted) |
+| a row scratch shared by columns bound by `do concurrent` (`shared by the columns along […] — a race`) | for a fixed value of the omitted index the columns share a cell; only a sequential omitted index makes the per-column reading sound |
+| a masked map (`a masked map over 'k'`) | the cells of skipped iterations stay unwritten, which `fun k => …` cannot say; a masked fold keeps its state instead |
+| a mask on a nest that binds only some of the column indices | the mask is scalarized in the nest that completes the columns |
+| a component write whose base is not an `intent(inout)` derived-type dummy, or inside a k-loop, or not indexed exactly by the columns (`the component write …`) | rule B for outputs admits exactly the per-column, write-only component array |
 | the same array read both as per-column and as per-k | one name, one shape |
 | a read at an offset in the k index (`a k-recurrence`) | the fold model reads layer `k` only |
 | a neighbor read along an index bound by a plain-do loop (`do concurrent (or ParallelFor) indices only`) | rule C's license is the binding construct's independence assertion |
@@ -120,7 +128,6 @@ the manifest's `columns`; what remains must fit the fold/map model.
 | a call to a procedure that is neither a banked primitive of the manifest nor declared ignorable (`not a banked primitive`) | the callee's generated def is what a call becomes; an unknown callee has none |
 | a call whose actual count differs from the callee's dummy count | positional matching needs the whole list |
 | a keyword actual (`positional only`; Fortran frontend) | the column pass matches positionally |
-| an `IF` outside a k-loop at the column level | per-column control flow around folds is next (B3) |
 
 ### Pruning under hypotheses (`flang_kernel._prune_block`, `clang_kernel._cxx_decided_false`)
 
@@ -136,7 +143,8 @@ the manifest's `columns`; what remains must fit the fold/map model.
 | a function parameter type outside Array4 / Real / bool / const struct & / const Box & / pointer | the admitted captured shapes |
 | a `ParallelFor` ordinal out of range, a lambda without `operator()` or a body | structural |
 | the lambda's `int` parameters not spelling the declared `columns` | refuse-don't-guess at the column names |
-| the lambda referencing a captured variable that is neither a parameter, a lambda-body local, a column index, a loop variable, nor a loop bound | statements outside the lambda are not modeled, so such a value has no meaning in the model |
+| the lambda referencing a captured variable that is neither a parameter, a lambda-body local, a column index, a loop variable, a loop bound, nor a `const Real` prologue local | statements outside the lambda are not modeled (except the hoisted `const Real` locals), so such a value has no meaning in the model |
+| the lambda capturing a **non-const** function-scope real (`non-const function-scope real(s)`) | its value at capture is not its declaration — anything between could have re-assigned it |
 | a `for` not of the shape `for (int k = lo; k <= hi; ++k)` with captured `lo`/`hi` | the one loop shape modeled as a fold/map |
 | an `Array4` access on a non-parameter, with other than three indices, a literal index other than a trailing `0`, or an index that is not a variable ± literal | the classification (per-k / per-column / stencil) needs exactly these shapes |
 | a member read through `->`, or on a non-parameter | rule B's mirror covers struct parameters only |
@@ -145,11 +153,11 @@ the manifest's `columns`; what remains must fit the fold/map model.
 
 | Trigger | Why it refuses |
 |---|---|
-| a fold with several state variables (`not yet supported`) | one state variable per fold today (several: B2) |
 | a fold state read before it is assigned | as for locals |
 | a map body containing anything but assignments and calls to banked primitives | a map is `fun k => …`; locals and ifs inside it are next |
 | a call output, map target, or fold state that is neither local nor output | as for assignments |
 | a fold with a multi-line step outside a `let` (printer) | the printer binds folds by `let`; functionalize always does |
+| a destructuring `let` whose value is neither a fold nor a joined IF's tuple (printer) | `let (a, b) :=` has exactly those two sources |
 
 ## The kernel bank (`groundline/kernel_bank.py`)
 
@@ -164,6 +172,7 @@ the manifest's `columns`; what remains must fit the fold/map model.
 | Trigger | Why it refuses |
 |---|---|
 | the body is not exactly one do-concurrent or plain-do nest | pointize models one loop nest; prologue/epilogue statements would be silently attributed to every iteration |
+| a `do concurrent` with a scalar mask (`masked iterations leave their cells unwritten`) | the pointwise model is a total function per cell and has no "skip"; masks are admitted in [column kernels](../concepts/column-kernels.md) only |
 | duplicate loop index in a plain-do nest | the schema lemma requires a duplicate-free enumeration |
 | a do-construct inside the loop body | the nest is not perfectly nested — the pointwise model has no place for an inner loop |
 | an array reference whose subscripts are not the loop indices, plainly or with a literal offset (`not indexed by the loop indices`: partial indexing of a plain array, `1+i` spellings, non-variable subscripts) | not point-local, or not a shape the model names |
@@ -199,7 +208,7 @@ reachable only if a caller bypasses the normal pipeline order:
 | Trigger | Why it refuses |
 |---|---|
 | integer-valued `/` or `**` — both operands built from integer literals (`a * (2/3)`) | the source evaluates these in **truncating integer arithmetic** (2/3 is 0), which the model over ℝ cannot represent; a mixed real/int operand is fine (the integer promotes). The C++ twin refuses earlier, at the cast allowlist. Faithful integer semantics is [roadmap](../limits.md#integer-values-in-kernel-bodies) |
-| a non-real **local** in the modeled body (`non-real local(s)`) | an integer local would be modeled as a real, hiding any truncation its assignments perform; a logical local has no meaning over ℝ. Integers as *addresses* — loop indices, bounds, subscripts — are unaffected: pointize consumes and drops them |
+| a non-real, non-logical **local** in the modeled body (`non-real local(s)`) | an integer local would be modeled as a real, hiding any truncation its assignments perform (a logical local is a `let` of a Bool-valued expression, fine). Integers as *addresses* — loop indices, bounds, subscripts — are unaffected: pointize consumes and drops them |
 | a call the printer cannot spell (anything but `abs`/`min`/`max`) | no invented Lean spelling for an unmodeled callee |
 | an `ArrayRef` or `ComponentRef` surviving to printing | pointization was skipped or incomplete — printing them as bare names would silently change meaning |
 | a parameter that is neither real nor logical surviving to printing (`non-real, non-logical parameters`) | the generated def's binders are `ℝ` and `Bool`; a derived-type or integer parameter must have been dropped or synthesized away |

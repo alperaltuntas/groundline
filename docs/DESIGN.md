@@ -415,13 +415,28 @@ frontier-and-gate story real).
   (`parallel_for`). The column lemmas are `simp only` with the callee's
   theorem: both sides sum the layers in the same order, so loop fusion is
   definitional and no reordering is argued. Kernel level via `foldSeq` over
-  columns and the schema lemma. Next: B2 (`set_zonal_BT_cont`: masks,
-  several fold states, component-array outputs), B3 (the mass-flux j-body).
+  columns and the schema lemma.
+  **B2 landed 2026-09-05 (later):** `set_zonal_BT_cont` against its lambda —
+  masks (`do concurrent (I, do_I(I,j))` → `if mask then step else state` in
+  the fold; a masked map refuses), row-scratch locals (`duL(I)` under `do j`
+  → per-column scalars, sound by the read-before-write refusal), folds with
+  several state variables (`let (duR, duL) := ks.foldl (fun (duR, duL) k =>
+  …)`), a column-level `if`, component-array outputs on an `intent(inout)`
+  derived-type dummy (rule B for outputs; the theorem carries the output
+  permutation), and on the C++ side flag arrays read as `!= 0`, bool locals,
+  hoisted `const Real` prologue locals, literals printed from their source
+  spelling. Three latent holes closed on the way (DEVLOG): the flang
+  frontend silently dropped `do concurrent` masks; functionalize could
+  capture an output's pending value under a later re-binding of a local
+  (fixed with shielding lets and a destructuring join — no existing def
+  changed); clang's `FloatingLiteral.value` is an approximation for
+  long-double literals. Next: B3 (the mass-flux j-body).
 - *Later:* kernels with cross-iteration structure (k-recurrences → induction —
   the genuinely sequential shapes the plain-DO gate refuses, e.g.
   `find_dz_for_eta`'s pressure accumulation), reductions (scalar
-  accumulators), masks/wet-dry logic, and more C++ surface (e.g. `pow` calls,
-  ternaries) as real kernels demand it.
+  accumulators), masks at the point tier (column kernels have them since
+  B2), and more C++ surface (e.g. `pow` calls, ternaries) as real kernels
+  demand it.
 
 **Ongoing — conformance corpus (D7).** Formalize `tests/f90/` into the corpus: a
 manifest (construct → fixture → parser code path), a coverage rule (every parse
